@@ -1,0 +1,689 @@
+window.switchStatsTab = function(tab) {
+    var statsPanel = document.getElementById('stats-panel');
+    var favoritesPanel = document.getElementById('favorites-panel');
+    var searchPanel = document.getElementById('search-panel');
+    var wordcloudPanel = document.getElementById('wordcloud-panel');
+    var allBtns = document.querySelectorAll('.stats-nav-btn');
+    allBtns.forEach(function(b) { b.classList.remove('active'); });
+    var activeBtn = document.querySelector('.stats-nav-btn[data-tab="' + tab + '"]');
+    if (activeBtn) activeBtn.classList.add('active');
+
+    if (statsPanel) statsPanel.style.display = 'none';
+    if (favoritesPanel) favoritesPanel.style.display = 'none';
+    if (searchPanel) searchPanel.style.display = 'none';
+    if (wordcloudPanel) wordcloudPanel.style.display = 'none';
+
+    if (tab === 'stats') {
+        if (statsPanel) statsPanel.style.display = 'block';
+    } else if (tab === 'search') {
+        if (searchPanel) searchPanel.style.display = 'block';
+        setTimeout(function() {
+            var inp = document.getElementById('msg-search-input');
+            if (inp) inp.focus();
+        }, 100);
+    } else if (tab === 'wordcloud') {
+        if (wordcloudPanel) wordcloudPanel.style.display = 'block';
+        requestAnimationFrame(function() {
+            if (typeof renderWordCloud === 'function') renderWordCloud();
+        });
+    } else {
+        if (favoritesPanel) favoritesPanel.style.display = 'block';
+        if (typeof renderFavorites === 'function') renderFavorites();
+    }
+};
+
+var groupChatSettings = (function() {
+    try {
+        var saved = JSON.parse(localStorage.getItem('groupChatSettings') || 'null');
+        if (!saved) return { enabled: false, showAvatar: true, showName: true, members: [] };
+        if (!saved.members) saved.members = [];
+        return saved;
+    } catch(e) { return { enabled: false, showAvatar: true, showName: true, members: [] }; }
+})();
+(function loadGroupAvatars() {
+    if (!window.localforage) return;
+    var members = groupChatSettings.members || [];
+    if (members.length === 0) return;
+    var promises = members.map(function(m, i) {
+        var ref = m.avatarRef || (m.id ? 'gca_' + m.id : 'gca_' + i);
+        return localforage.getItem(ref).then(function(avatar) {
+            m.avatar = avatar || null;
+        }).catch(function() { m.avatar = null; });
+    });
+    Promise.all(promises).then(function() {
+        if (typeof renderGroupMembersList === 'function') renderGroupMembersList();
+    });
+})();
+var _groupMemberAvatarDataUrl = null;
+
+function saveGroupChatSettings() {
+    var members = groupChatSettings.members || [];
+    var toSave = {
+        enabled: groupChatSettings.enabled,
+        showAvatar: groupChatSettings.showAvatar,
+        showName: groupChatSettings.showName,
+        members: members.map(function(m) {
+            if (!m.id) m.id = 'gcm_' + Date.now() + '_' + Math.random().toString(36).slice(2,7);
+            return { name: m.name, id: m.id, avatarRef: 'gca_' + m.id, soundUrl: m.soundUrl || '' };
+        })
+    };
+    try {
+        localStorage.setItem('groupChatSettings', JSON.stringify(toSave));
+    } catch(e) {
+        console.warn('groupChatSettings localStorage保存失败:', e);
+    }
+    if (window.localforage) {
+        members.forEach(function(m) {
+            if (!m.id) m.id = 'gcm_' + Date.now() + '_' + Math.random().toString(36).slice(2,7);
+            localforage.setItem('gca_' + m.id, m.avatar || null).catch(function(e) {
+                console.warn('头像存储失败 id=' + m.id, e);
+            });
+        });
+    }
+}
+
+function renderGroupMembersList() {
+    var list = document.getElementById('group-members-list');
+    if (!list) return;
+    if (!groupChatSettings.members || groupChatSettings.members.length === 0) {
+        list.innerHTML = '<div style="text-align:center;padding:20px;color:var(--text-secondary);font-size:13px;">暂无成员，点击添加按钮添加</div>';
+        return;
+    }
+    list.innerHTML = groupChatSettings.members.map(function(m, i) {
+        var avatarHtml = m.avatar
+            ? '<img src="' + m.avatar + '" style="width:36px;height:36px;border-radius:50%;object-fit:cover;">'
+            : '<div style="width:36px;height:36px;border-radius:50%;background:rgba(var(--accent-color-rgb),0.15);display:flex;align-items:center;justify-content:center;"><i class="fas fa-user" style="font-size:14px;color:var(--accent-color);"></i></div>';
+        return '<div style="display:flex;align-items:center;gap:10px;padding:10px 12px;background:var(--primary-bg);border:1px solid var(--border-color);border-radius:10px;">'
+            + avatarHtml
+            + '<span style="flex:1;font-size:13px;font-weight:500;">' + (m.name || '成员' + (i+1)) + '</span>'
+            + '<button onclick="openEditGroupMember(' + i + ')" style="background:none;border:none;cursor:pointer;color:var(--accent-color);font-size:14px;padding:4px 8px;"><i class="fas fa-edit"></i></button>'
+            + '<button onclick="deleteGroupMember(' + i + ')" style="background:none;border:none;cursor:pointer;color:#ff4757;font-size:14px;padding:4px 8px;"><i class="fas fa-trash-alt"></i></button>'
+            + '</div>';
+    }).join('');
+}
+
+function updateGroupModeUI() {
+    var pill = document.getElementById('group-mode-pill');
+    var knob = document.getElementById('group-mode-knob');
+    var status = document.getElementById('group-mode-status');
+    var displaySection = document.getElementById('group-display-section');
+    var membersSection = document.getElementById('group-members-section');
+    if (!pill) return;
+    if (groupChatSettings.enabled) {
+        pill.style.background = 'var(--accent-color)';
+        knob.style.left = '22px';
+        status.textContent = '已开启 — 收到的消息随机显示成员';
+        displaySection.style.display = 'block';
+        membersSection.style.display = 'block';
+    } else {
+        pill.style.background = 'var(--border-color)';
+        knob.style.left = '3px';
+        status.textContent = '已关闭 — 点击开启';
+        displaySection.style.display = 'none';
+        membersSection.style.display = 'none';
+    }
+    var avatarPill = document.getElementById('group-show-avatar-pill');
+    var avatarKnob = document.getElementById('group-show-avatar-knob');
+    if (avatarPill) {
+        avatarPill.style.background = groupChatSettings.showAvatar ? 'var(--accent-color)' : 'var(--border-color)';
+        avatarKnob.style.right = groupChatSettings.showAvatar ? '3px' : '19px';
+    }
+    var namePill = document.getElementById('group-show-name-pill');
+    var nameKnob = document.getElementById('group-show-name-knob');
+    if (namePill) {
+        namePill.style.background = groupChatSettings.showName ? 'var(--accent-color)' : 'var(--border-color)';
+        nameKnob.style.right = groupChatSettings.showName ? '3px' : '19px';
+    }
+    renderGroupMembersList();
+}
+
+document.addEventListener('DOMContentLoaded', function() {
+    var groupModeToggle = document.getElementById('group-mode-toggle');
+    if (groupModeToggle) {
+        groupModeToggle.addEventListener('click', function() {
+            groupChatSettings.enabled = !groupChatSettings.enabled;
+            saveGroupChatSettings();
+            updateGroupModeUI();
+        });
+    }
+    var showAvatarToggle = document.getElementById('group-show-avatar-toggle');
+    if (showAvatarToggle) {
+        showAvatarToggle.addEventListener('click', function() {
+            groupChatSettings.showAvatar = !groupChatSettings.showAvatar;
+            saveGroupChatSettings();
+            updateGroupModeUI();
+        });
+    }
+    var showNameToggle = document.getElementById('group-show-name-toggle');
+    if (showNameToggle) {
+        showNameToggle.addEventListener('click', function() {
+            groupChatSettings.showName = !groupChatSettings.showName;
+            saveGroupChatSettings();
+            updateGroupModeUI();
+        });
+    }
+    var closeGroupChat = document.getElementById('close-group-chat');
+    if (closeGroupChat) {
+        closeGroupChat.addEventListener('click', function() {
+            var m = document.getElementById('group-chat-modal');
+            if (m && typeof hideModal === 'function') hideModal(m);
+        });
+    }
+    setTimeout(updateGroupModeUI, 200);
+});
+
+window.openAddGroupMember = function() {
+    _groupMemberAvatarDataUrl = null;
+    document.getElementById('group-member-edit-title').textContent = '添加成员';
+    document.getElementById('group-member-name-input').value = '';
+    document.getElementById('group-member-sound-input').value = '';
+    document.getElementById('group-member-edit-index').value = '';
+    var preview = document.getElementById('group-member-avatar-preview');
+    preview.innerHTML = '<i class="fas fa-camera" style="font-size:20px;color:var(--text-secondary);"></i>';
+    var m = document.getElementById('group-member-edit-modal');
+    if (m && typeof showModal === 'function') showModal(m);
+};
+
+window.openEditGroupMember = function(idx) {
+    var member = groupChatSettings.members[idx];
+    if (!member) return;
+    _groupMemberAvatarDataUrl = member.avatar || null;
+    document.getElementById('group-member-edit-title').textContent = '编辑成员';
+    document.getElementById('group-member-name-input').value = member.name || '';
+    document.getElementById('group-member-sound-input').value = member.soundUrl || '';
+    document.getElementById('group-member-edit-index').value = idx;
+    var preview = document.getElementById('group-member-avatar-preview');
+    if (member.avatar) {
+        preview.innerHTML = '<img src="' + member.avatar + '" style="width:100%;height:100%;object-fit:cover;border-radius:50%;">';
+    } else {
+        preview.innerHTML = '<i class="fas fa-camera" style="font-size:20px;color:var(--text-secondary);"></i>';
+    }
+    var m = document.getElementById('group-member-edit-modal');
+    if (m && typeof showModal === 'function') showModal(m);
+};
+
+window.closeGroupMemberEdit = function() {
+    var m = document.getElementById('group-member-edit-modal');
+    if (m && typeof hideModal === 'function') hideModal(m);
+};
+
+window.previewGroupMemberAvatar = function(input) {
+    var file = input.files[0];
+    if (!file) return;
+    var reader = new FileReader();
+    reader.onload = function(e) {
+        _groupMemberAvatarDataUrl = e.target.result;
+        var preview = document.getElementById('group-member-avatar-preview');
+        preview.innerHTML = '<img src="' + e.target.result + '" style="width:100%;height:100%;object-fit:cover;border-radius:50%;">';
+    };
+    reader.readAsDataURL(file);
+};
+
+window.saveGroupMember = function() {
+    var name = (document.getElementById('group-member-name-input').value || '').trim();
+    if (!name) { showNotification('请输入成员名字', 'warning'); return; }
+    var idxVal = document.getElementById('group-member-edit-index').value;
+    var soundUrl = (document.getElementById('group-member-sound-input').value || '').trim();
+    var member = { name: name, avatar: _groupMemberAvatarDataUrl, soundUrl: soundUrl };
+    if (idxVal !== '') {
+        groupChatSettings.members[parseInt(idxVal)] = member;
+    } else {
+        if (!groupChatSettings.members) groupChatSettings.members = [];
+        groupChatSettings.members.push(member);
+    }
+    saveGroupChatSettings();
+    renderGroupMembersList();
+    window.closeGroupMemberEdit();
+};
+
+window.deleteGroupMember = async function(idx) {
+    var member = groupChatSettings.members[idx];
+    if (!member) return;
+    var ok = await uiConfirm({ title: '删除成员', message: '确定删除成员「' + (member.name || '') + '」吗？', danger: true });
+    if (!ok) return;
+    groupChatSettings.members.splice(idx, 1);
+    saveGroupChatSettings();
+    renderGroupMembersList();
+};
+
+window.getGroupMemberForMessage = function(msgId) {
+    if (!groupChatSettings.enabled || !groupChatSettings.members || groupChatSettings.members.length === 0) return null;
+    var seed = 0;
+    var idStr = String(msgId);
+    for (var i = 0; i < idStr.length; i++) seed += idStr.charCodeAt(i) * (i + 1);
+    return groupChatSettings.members[seed % groupChatSettings.members.length];
+};
+
+document.addEventListener('DOMContentLoaded', function() {
+    var exportAllBtn = document.getElementById('export-all-settings');
+    var importAllBtn = document.getElementById('import-all-settings');
+if (exportAllBtn) {
+        exportAllBtn.addEventListener('click', async function() {
+            const overlay = document.createElement('div');
+            overlay.style.cssText = 'position:fixed;inset:0;z-index:99999;background:rgba(0,0,0,0.55);backdrop-filter:blur(8px);display:flex;align-items:center;justify-content:center;animation:fadeIn 0.2s ease;';
+            overlay.innerHTML = `
+                <div style="background:var(--secondary-bg);border-radius:20px;padding:24px;width:88%;max-width:380px;box-shadow:0 20px 60px rgba(0,0,0,0.4);animation:modalContentSlideIn 0.3s ease forwards;">
+                    <div style="font-size:15px;font-weight:700;color:var(--text-primary);margin-bottom:4px;display:flex;align-items:center;gap:8px;">
+                        <i class="fas fa-archive" style="color:var(--accent-color);font-size:14px;"></i>全量备份导出
+                    </div>
+                    <div style="font-size:12px;color:var(--text-secondary);margin-bottom:16px;">图片/头像/背景等二进制文件已自动排除，选择需要备份的模块</div>
+                    <div style="display:flex;flex-direction:column;gap:9px;margin-bottom:20px;">
+                        <label style="display:flex;align-items:center;gap:10px;cursor:pointer;padding:10px 12px;border:1px solid var(--border-color);border-radius:12px;background:var(--primary-bg);font-size:13px;color:var(--text-primary);">
+                            <input type="checkbox" id="_bk_msgs" checked style="accent-color:var(--accent-color);width:15px;height:15px;">
+                            <i class="fas fa-comments" style="color:var(--accent-color);width:16px;text-align:center;"></i>
+                            <span>聊天记录 <span style="font-size:11px;color:var(--text-secondary);">(${messages.length} 条)</span></span>
+                        </label>
+                        <label style="display:flex;align-items:center;gap:10px;cursor:pointer;padding:10px 12px;border:1px solid var(--border-color);border-radius:12px;background:var(--primary-bg);font-size:13px;color:var(--text-primary);">
+                            <input type="checkbox" id="_bk_settings" checked style="accent-color:var(--accent-color);width:15px;height:15px;">
+                            <i class="fas fa-sliders-h" style="color:var(--accent-color);width:16px;text-align:center;"></i>
+                            <span>外观与聊天设置</span>
+                        </label>
+                        <label style="display:flex;align-items:center;gap:10px;cursor:pointer;padding:10px 12px;border:1px solid var(--border-color);border-radius:12px;background:var(--primary-bg);font-size:13px;color:var(--text-primary);">
+                            <input type="checkbox" id="_bk_custom" checked style="accent-color:var(--accent-color);width:15px;height:15px;">
+                            <i class="fas fa-reply" style="color:var(--accent-color);width:16px;text-align:center;"></i>
+                            <span>字卡 / 拍一拍 / 状态 / 格言</span>
+                        </label>
+                        <label style="display:flex;align-items:center;gap:10px;cursor:pointer;padding:10px 12px;border:1px solid var(--border-color);border-radius:12px;background:var(--primary-bg);font-size:13px;color:var(--text-primary);">
+                            <input type="checkbox" id="_bk_ann" checked style="accent-color:var(--accent-color);width:15px;height:15px;">
+                            <i class="fas fa-calendar-heart" style="color:var(--accent-color);width:16px;text-align:center;"></i>
+                            <span>纪念日 / 倒计时</span>
+                        </label>
+                        <label style="display:flex;align-items:center;gap:10px;cursor:pointer;padding:10px 12px;border:1px solid var(--border-color);border-radius:12px;background:var(--primary-bg);font-size:13px;color:var(--text-primary);">
+                            <input type="checkbox" id="_bk_themes" checked style="accent-color:var(--accent-color);width:15px;height:15px;">
+                            <i class="fas fa-palette" style="color:var(--accent-color);width:16px;text-align:center;"></i>
+                            <span>自定义主题 / 方案</span>
+                        </label>
+                        <label style="display:flex;align-items:center;gap:10px;cursor:pointer;padding:10px 12px;border:1px solid var(--border-color);border-radius:12px;background:var(--primary-bg);font-size:13px;color:var(--text-primary);">
+                            <input type="checkbox" id="_bk_dg" checked style="accent-color:var(--accent-color);width:15px;height:15px;">
+                            <i class="fas fa-sun" style="color:var(--accent-color);width:16px;text-align:center;"></i>
+                            <span>每日公告 / 心情数据</span>
+                        </label>
+                    </div>
+                    <div style="display:flex;gap:10px;">
+                        <button id="_bk_cancel" style="flex:1;padding:11px;border:1px solid var(--border-color);border-radius:12px;background:none;color:var(--text-secondary);font-size:13px;cursor:pointer;font-family:var(--font-family);">取消</button>
+                        <button id="_bk_confirm" style="flex:2;padding:11px;border:none;border-radius:12px;background:var(--accent-color);color:#fff;font-size:13px;font-weight:600;cursor:pointer;font-family:var(--font-family);display:flex;align-items:center;justify-content:center;gap:7px;">
+                            <i class="fas fa-download"></i>导出备份
+                        </button>
+                    </div>
+                </div>`;
+            document.body.appendChild(overlay);
+
+            function closeBkDialog() { overlay.remove(); }
+            overlay.addEventListener('click', ev => { if (ev.target === overlay) closeBkDialog(); });
+            document.getElementById('_bk_cancel').onclick = closeBkDialog;
+
+            document.getElementById('_bk_confirm').onclick = async function() {
+                const inclMsgs    = document.getElementById('_bk_msgs').checked;
+                const inclSet     = document.getElementById('_bk_settings').checked;
+                const inclCustom  = document.getElementById('_bk_custom').checked;
+                const inclAnn     = document.getElementById('_bk_ann').checked;
+                const inclThemes  = document.getElementById('_bk_themes').checked;
+                const inclDg      = document.getElementById('_bk_dg').checked;
+
+                if (!inclMsgs && !inclSet && !inclCustom && !inclAnn && !inclThemes && !inclDg) {
+                    showNotification('请至少选择一项', 'error');
+                    return;
+                }
+                closeBkDialog();
+
+                try {
+                    const skipKeys = [
+                        'stickerLibrary', 'myStickerLibrary', 'backgroundGallery',
+                        'chatBackground', 'partnerAvatar', 'myAvatar', 'playerCover',
+                        'dg_header_bg', 'dg_overlay_bg'
+                    ];
+
+                    const moduleSkipPatterns = [];
+                    if (!inclMsgs)   moduleSkipPatterns.push('chatMessages');
+                    if (!inclSet)    moduleSkipPatterns.push('chatSettings', 'partnerPersonas', 'showPartnerNameInChat');
+                    if (!inclCustom) moduleSkipPatterns.push('customReplies', 'customPokes', 'customStatuses', 'customMottos', 'customIntros', 'customEmojis');
+                    if (!inclAnn)    moduleSkipPatterns.push('anniversaries');
+                    if (!inclThemes) moduleSkipPatterns.push('customThemes', 'themeSchemes');
+                    if (!inclDg)     moduleSkipPatterns.push('dg_custom_data', 'dg_status_pool', 'weekly_fortune');
+
+                    function deepCleanLargeData(obj, depth) {
+                        depth = depth || 0;
+                        if (depth > 10) return obj;
+                        if (obj === null || obj === undefined) return obj;
+                        if (typeof obj === 'string') {
+                            if (obj.startsWith('data:image/') && obj.length > 2000) return '[图片已跳过]';
+                            return obj;
+                        }
+                        if (Array.isArray(obj)) return obj.map(item => deepCleanLargeData(item, depth + 1));
+                        if (typeof obj === 'object') {
+                            const newObj = {};
+                            for (let k in obj) {
+                                if (!Object.prototype.hasOwnProperty.call(obj, k)) continue;
+                                if ((k === 'image' || k === 'decoImg' || k === 'iconImg' || k.includes('Avatar') || k.includes('Cover')) &&
+                                    typeof obj[k] === 'string' && obj[k].startsWith('data:image/') && obj[k].length > 2000) continue;
+                                newObj[k] = deepCleanLargeData(obj[k], depth + 1);
+                            }
+                            return newObj;
+                        }
+                        return obj;
+                    }
+
+                    const shouldSkipKey = (k) => {
+                        if (skipKeys.some(s => k.includes(s))) return true;
+                        if (k.startsWith('annHeaderBg_')) return true;
+                        if (moduleSkipPatterns.some(p => k.includes(p))) return true;
+                        if (!inclDg && (k === 'dg_custom_data' || k === 'dg_status_pool' || k.startsWith('customWeather_'))) return true;
+                        return false;
+                    };
+
+                    var backup = {
+                        version: 3,
+                        type: 'full-backup-lite',
+                        timestamp: new Date().toISOString(),
+                        modules: { messages: inclMsgs, settings: inclSet, custom: inclCustom, anniversaries: inclAnn, themes: inclThemes, dg: inclDg }
+                    };
+
+                    var lsData = {};
+                    for (var i = 0; i < localStorage.length; i++) {
+                        var k = localStorage.key(i);
+                        if (shouldSkipKey(k)) continue;
+                        try {
+                            let val = localStorage.getItem(k);
+                            try {
+                                let parsed = JSON.parse(val);
+                                val = JSON.stringify(deepCleanLargeData(parsed));
+                            } catch(e) {
+                                if (val.startsWith('data:image/') && val.length > 1000) continue;
+                            }
+                            lsData[k] = val;
+                        } catch(e) { console.warn('处理 localStorage 失败:', k); }
+                    }
+                    backup.localStorage = lsData;
+
+                    if (window.localforage) {
+                        var lfData = {};
+                        var keys = await localforage.keys();
+                        for (var ki = 0; ki < keys.length; ki++) {
+                            const key = keys[ki];
+                            if (shouldSkipKey(key)) continue;
+                            try {
+                                const rawVal = await localforage.getItem(key);
+                                if (rawVal === null || rawVal === undefined) continue;
+                                lfData[key] = deepCleanLargeData(rawVal);
+                            } catch(e) { console.warn('处理 localforage 失败:', key, e); }
+                        }
+                        backup.localforage = lfData;
+                        if (typeof SESSION_ID !== 'undefined') backup.sessionId = SESSION_ID;
+                    }
+
+                    var dataStr = JSON.stringify(backup, null, 0);
+                    var bom = '\uFEFF';
+                    var blob = new Blob([bom + dataStr], { type: 'application/json;charset=utf-8' });
+                    var exportFileName = 'chatapp-backup-' + new Date().toISOString().slice(0,10) + '.json';
+
+                    if (navigator.share && /Mobile|Android|iPhone|iPad/.test(navigator.userAgent)) {
+                        var shareFile = new File([blob], exportFileName, { type: 'application/json' });
+                        if (navigator.canShare && navigator.canShare({ files: [shareFile] })) {
+                            navigator.share({ files: [shareFile], title: '传讯全量备份', text: '备份日期：' + new Date().toLocaleDateString() })
+                                .catch(function() {
+                                    var url2 = URL.createObjectURL(blob);
+                                    var link2 = document.createElement('a');
+                                    link2.href = url2; link2.download = exportFileName;
+                                    document.body.appendChild(link2); link2.click(); document.body.removeChild(link2);
+                                    setTimeout(() => URL.revokeObjectURL(url2), 2000);
+                                });
+                            if (typeof showNotification === 'function') showNotification('备份导出成功', 'success');
+                            return;
+                        }
+                    }
+
+                    var url = URL.createObjectURL(blob);
+                    var link = document.createElement('a');
+                    link.href = url;
+                    link.download = exportFileName;
+                    document.body.appendChild(link);
+                    link.click();
+                    document.body.removeChild(link);
+                    setTimeout(() => URL.revokeObjectURL(url), 2000);
+                    if (typeof showNotification === 'function') showNotification('备份导出成功', 'success');
+                } catch(e) {
+                    console.error('全量备份导出失败:', e);
+                    if (typeof showNotification === 'function') showNotification('导出失败，请重试', 'error');
+                }
+            };
+        });
+    }
+if (importAllBtn) {
+        importAllBtn.addEventListener('click', function() {
+            var input = document.createElement('input');
+            input.type = 'file';
+            input.accept = '.json';
+            input.onchange = async function(e) {
+                var file = e.target.files[0];
+                if (!file) return;
+                
+                if (file.size > 100 * 1024 * 1024) {
+                    if (typeof showNotification === 'function') showNotification('文件过大，请检查是否是正确的备份文件', 'error');
+                    return;
+                }
+                
+                var reader = new FileReader();
+                reader.onload = async function(ev) {
+                    var backup;
+                        try {
+                            var rawText = ev.target.result;
+                            if (rawText.charCodeAt(0) === 0xFEFF) rawText = rawText.slice(1);
+                            backup = JSON.parse(rawText);
+                        } catch(parseErr) {
+                            if (typeof showNotification === 'function') showNotification('文件解析失败，文件可能已损坏或不是有效的 JSON', 'error');
+                            return;
+                        }
+                        
+                        if (!backup || !backup.type || !backup.type.includes('backup')) {
+                            if (typeof showNotification === 'function') showNotification('不是有效的传讯备份文件', 'error');
+                            return;
+                        }
+
+                        var doRestore = async function() {
+                            try {
+                            if (backup.localStorage) {
+                              for (var k in backup.localStorage) {
+                                if (!Object.prototype.hasOwnProperty.call(backup.localStorage, k)) continue;
+                                try {
+                                    var lsVal = backup.localStorage[k];
+                                    if (typeof lsVal === 'string' && lsVal.startsWith('data:image/') && lsVal.length > 2000) continue;
+                                    localStorage.setItem(k, lsVal);
+                                } catch(e) { console.warn('恢复 localStorage 失败:', k); }
+                            }
+                        }
+
+                        if (window.localforage && backup.localforage) {
+                            var lfKeys = Object.keys(backup.localforage);
+                            
+                            var backupSessionId = backup.sessionId || null;
+                            if (!backupSessionId) {
+                                var pfxAuto = typeof APP_PREFIX !== 'undefined' ? APP_PREFIX : 'CHAT_APP_V3_';
+                                var skipParts = ['MIGRATION', 'sessionList', 'lastSessionId', 'customThemes', 'themeSchemes'];
+                                for (var si = 0; si < lfKeys.length; si++) {
+                                    var sk = lfKeys[si];
+                                    if (!sk.startsWith(pfxAuto)) continue;
+                                    if (skipParts.some(function(s) { return sk.startsWith(pfxAuto + s); })) continue;
+                                    var afterPfx = sk.slice(pfxAuto.length);
+                                    var uIdx = afterPfx.indexOf('_');
+                                    if (uIdx > 0) { backupSessionId = afterPfx.slice(0, uIdx); break; }
+                                }
+                            }
+
+                            var needRemap = backupSessionId && 
+                                           typeof SESSION_ID !== 'undefined' && 
+                                           SESSION_ID && 
+                                           backupSessionId !== SESSION_ID;
+
+                            for (var li = 0; li < lfKeys.length; li++) {
+                                var lk = lfKeys[li];
+                                var targetKey = lk;
+                                if (needRemap && lk.includes(backupSessionId)) {
+                                    targetKey = lk.replace(new RegExp(backupSessionId.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g'), SESSION_ID);
+                                }
+                                try {
+                                    await localforage.setItem(targetKey, backup.localforage[lk]);
+                                } catch(e) { console.warn('恢复 localforage 失败:', targetKey, e); }
+                            }
+                            if (typeof APP_PREFIX !== 'undefined' && typeof SESSION_ID !== 'undefined') {
+                                try { await localforage.setItem(APP_PREFIX + 'lastSessionId', SESSION_ID); } catch(e) {}
+                            }
+                        }
+                        
+                        if (typeof showNotification === 'function') showNotification('数据恢复成功，即将刷新页面应用更改', 'success', 2000);
+                        setTimeout(function() { location.reload(); }, 2000);
+                    } catch(e) {
+                        if (typeof showNotification === 'function') showNotification('导入失败：' + e.message, 'error');
+                        console.error('导入报错:', e);
+                    }
+                };
+                uiConfirm({ title: '导入全量备份', message: '导入全量备份将覆盖当前的聊天记录和设置。\n\n注：你设备上现有的头像、背景和表情包会被安全保留。\n\n确定继续吗？', danger: true }).then(function(ok) {
+                    if (ok) doRestore();
+                });
+                };
+                reader.onerror = function() {
+                    if (typeof showNotification === 'function') showNotification('文件读取失败，请重试', 'error');
+                };
+                reader.readAsText(file, 'UTF-8');
+            };
+            document.body.appendChild(input);
+            input.click();
+            document.body.removeChild(input);
+        });
+    }
+});
+
+window.startEditDgWeather = function(el) {
+    var current = el.textContent.trim();
+    var input = document.createElement('input');
+    input.type = 'text';
+    input.value = current;
+    input.maxLength = 20;
+    input.style.cssText = 'width:120px;padding:2px 6px;border:1px solid var(--accent-color);border-radius:6px;font-size:13px;background:var(--primary-bg);color:var(--text-primary);outline:none;';
+    el.style.display = 'none';
+    el.parentNode.insertBefore(input, el.nextSibling);
+    input.focus();
+    input.select();
+    function saveWeather() {
+        var val = input.value.trim() || current;
+        el.textContent = val;
+        el.style.display = '';
+        input.remove();
+        var now = new Date();
+        var dateKey = 'customWeather_' + now.getFullYear() + '_' + (now.getMonth()+1) + '_' + now.getDate();
+        localStorage.setItem(dateKey, val);
+    }
+    input.addEventListener('blur', saveWeather);
+    input.addEventListener('keydown', function(e) {
+        if (e.key === 'Enter') { e.preventDefault(); saveWeather(); }
+        if (e.key === 'Escape') { el.style.display = ''; input.remove(); }
+    });
+};
+
+    document.addEventListener('focusin', function(e) {
+        if (e.target && (e.target.classList.contains('message-input') || e.target.tagName === 'TEXTAREA')) {
+            setTimeout(function() {
+                var chat = document.querySelector('.chat-container');
+                if (chat) chat.scrollTop = chat.scrollHeight;
+            }, 100);
+        }
+    });
+
+
+window._runMsgSearch = function() {
+    var input = document.getElementById('msg-search-input');
+    var dateFrom = document.getElementById('msg-search-date-from');
+    var dateTo = document.getElementById('msg-search-date-to');
+    var resultsEl = document.getElementById('msg-search-results');
+    if (!input || !resultsEl) return;
+
+    var q = input.value.trim().toLowerCase();
+    var from = dateFrom && dateFrom.value ? new Date(dateFrom.value) : null;
+    var to = dateTo && dateTo.value ? new Date(dateTo.value + 'T23:59:59') : null;
+
+    var allMessages = (typeof messages !== 'undefined' ? messages : [])
+        .filter(function(m) { return m.type !== 'system'; });
+
+    var filtered = allMessages.filter(function(m) {
+        var matchText = !q || (m.text && m.text.toLowerCase().includes(q)) || (m.image && !q);
+        if (q && m.image && !m.text) matchText = false;
+        if (q) matchText = m.text && m.text.toLowerCase().includes(q);
+        var ts = m.timestamp ? new Date(m.timestamp) : null;
+        var matchFrom = !from || (ts && ts >= from);
+        var matchTo = !to || (ts && ts <= to);
+        return matchText && matchFrom && matchTo;
+    });
+
+    if (!q && !from && !to) {
+        resultsEl.innerHTML = '<div style="text-align:center;padding:24px;color:var(--text-secondary);font-size:13px;">输入关键词或选择日期开始搜索</div>';
+        return;
+    }
+
+    if (filtered.length === 0) {
+        resultsEl.innerHTML = '<div style="text-align:center;padding:24px;color:var(--text-secondary);font-size:13px;">未找到相关消息</div>';
+        return;
+    }
+
+    var myAvatarEl = document.querySelector('#my-avatar img');
+    var partnerAvatarEl = document.querySelector('#partner-avatar img');
+    var myAvatar = myAvatarEl ? myAvatarEl.src : '';
+    var partnerAvatar = partnerAvatarEl ? partnerAvatarEl.src : '';
+    var myName = (typeof settings !== 'undefined' && settings.myName) || '我';
+    var partnerName = (typeof settings !== 'undefined' && settings.partnerName) || '对方';
+
+    function highlight(text) {
+        if (!q || !text) return (text || '').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+        var safe = text.replace(/</g,'&lt;').replace(/>/g,'&gt;');
+        var safeQ = q.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        return safe.replace(new RegExp('(' + safeQ + ')', 'gi'), '<mark style="background:rgba(var(--accent-color-rgb,180,140,100),0.3);border-radius:2px;padding:0 1px;">$1</mark>');
+    }
+
+    resultsEl.innerHTML = filtered.map(function(msg) {
+        var isUser = msg.sender === 'user';
+        var name = isUser ? myName : partnerName;
+        var avatar = isUser ? myAvatar : partnerAvatar;
+
+        if (!isUser && typeof groupChatSettings !== 'undefined' && groupChatSettings.enabled && groupChatSettings.members) {
+            var member = groupChatSettings.members.find(function(m) { return m.name === msg.sender; });
+            if (member) {
+                name = member.name;
+                avatar = member.avatar || '';
+            }
+        }
+
+        var ts = msg.timestamp ? new Date(msg.timestamp).toLocaleString('zh-CN', {
+            month:'2-digit', day:'2-digit', hour:'2-digit', minute:'2-digit'
+        }) : '';
+
+        var avatarHtml = avatar
+            ? '<img src="' + avatar + '" style="width:34px;height:34px;border-radius:50%;object-fit:cover;flex-shrink:0;">'
+            : '<div style="width:34px;height:34px;border-radius:50%;background:rgba(var(--accent-color-rgb,180,140,100),0.18);display:flex;align-items:center;justify-content:center;flex-shrink:0;"><i class="fas fa-user" style="font-size:14px;color:var(--accent-color);"></i></div>';
+
+        var contentHtml = '';
+        if (msg.text) contentHtml += '<div style="font-size:13px;color:var(--text-primary);line-height:1.5;word-break:break-word;margin-top:3px;">' + highlight(msg.text) + '</div>';
+        if (msg.image) contentHtml += '<img src="' + msg.image + '" style="max-width:120px;max-height:90px;border-radius:8px;display:block;margin-top:5px;cursor:pointer;" onclick="if(typeof viewImage===\'function\')viewImage(\'' + msg.image.replace(/'/g,"\\'") + '\')" loading="lazy">';
+
+        return '<div style="display:flex;align-items:flex-start;gap:10px;padding:10px 12px;border-radius:12px;background:var(--primary-bg);border:1px solid var(--border-color);margin-bottom:8px;cursor:pointer;" onclick="if(typeof scrollToMessage===\'function\')scrollToMessage(' + msg.id + ')">'
+            + avatarHtml
+            + '<div style="flex:1;min-width:0;">'
+            + '<div style="display:flex;align-items:center;justify-content:space-between;gap:8px;">'
+            + '<span style="font-size:12px;font-weight:600;color:var(--accent-color);">' + name + '</span>'
+            + '<span style="font-size:11px;color:var(--text-secondary);white-space:nowrap;">' + ts + '</span>'
+            + '</div>'
+            + contentHtml
+            + '</div></div>';
+    }).join('');
+
+    resultsEl.insertAdjacentHTML('afterbegin',
+        '<div style="font-size:12px;color:var(--text-secondary);margin-bottom:8px;padding:0 2px;">共找到 ' + filtered.length + ' 条结果</div>'
+    );
+};
+
+window.scrollToMessage = function(msgId) {
+    var el = document.querySelector('[data-id="' + msgId + '"]');
+    if (el) {
+        el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        el.style.transition = 'background 0.3s';
+        el.style.background = 'rgba(var(--accent-color-rgb,180,140,100),0.18)';
+        setTimeout(function() { el.style.background = ''; }, 1500);
+    }
+};

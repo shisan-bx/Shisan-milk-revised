@@ -55,25 +55,14 @@ function toggleBatchFavoriteMode() {
                 return;
             }
 
-
             const count = selectedMessages.length;
+            // 同一次批量收藏的消息打包进同一个收藏分组
+            addToFavorites(selectedMessages.slice());
 
-
-            selectedMessages.forEach(msgId => {
-                const message = messages.find(m => m.id === msgId);
-                if (message) {
-                    message.favorited = true;
-                }
-            });
-
-
-            throttledSaveData();
-
-
+            if (typeof renderMessages === 'function') renderMessages(true);
             toggleBatchFavoriteMode();
 
-
-            showNotification(`已成功收藏 ${count} 条消息`, 'success');
+            showNotification(`已将 ${count} 条消息收藏到同一分组`, 'success');
         }
 
 

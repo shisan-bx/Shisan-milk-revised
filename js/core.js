@@ -105,6 +105,7 @@
                 partnerAvatarShape: 'circle',
 autoSendEnabled: false,
 autoSendInterval: 5,
+autoSendRandomEnabled: false, // 随机发送模式（与定时发送互斥）
         allowReadNoReply: false, 
         readNoReplyChance: 0.2,
         timeFormat: 'HH:mm',
@@ -234,7 +235,8 @@ const loadData = async () => {
             localforage.getItem(getStorageKey('momentsTexts')),
             localforage.getItem(getStorageKey('momentsPosts')),
             localforage.getItem(getStorageKey('momentsSettings')),
-            localforage.getItem(getStorageKey('momentsReplies'))
+            localforage.getItem(getStorageKey('momentsReplies')),
+            localforage.getItem(getStorageKey('favoriteGroups'))
         ]);
         const getVal = (index) => results[index].status === 'fulfilled' ? results[index].value : null;
 
@@ -261,6 +263,7 @@ const loadData = async () => {
         const savedMomentsPosts = getVal(20);
         const savedMomentsSettings = getVal(21);
         const savedMomentsReplies = getVal(22);
+        const savedFavoriteGroups = getVal(23);
         if (savedMomentsTexts && Array.isArray(savedMomentsTexts)) momentsTexts = savedMomentsTexts;
         if (savedMomentsPosts && Array.isArray(savedMomentsPosts)) momentsPosts = savedMomentsPosts;
         if (savedMomentsSettings && typeof savedMomentsSettings === 'object') Object.assign(momentsSettings, savedMomentsSettings);
@@ -321,6 +324,10 @@ const loadData = async () => {
             }
         }
 
+        // 收藏分组：加载并把旧版散落在消息上的 favorited 标记迁移为分组结构
+        favoriteGroups = _normalizeFavGroups(savedFavoriteGroups);
+        if (_migrateLegacyFavorites()) setTimeout(() => saveData(), 500);
+
         if (savedBgGallery) {
             savedBackgrounds = savedBgGallery;
         } else {
@@ -361,6 +368,10 @@ const loadData = async () => {
         setTimeout(() => {
             applyAllAvatarFrames();
             manageAutoSendTimer(); 
+            // 如果随机发送已开启，也启动它
+            if (settings.autoSendRandomEnabled && typeof scheduleRandomAutoSend === 'function') {
+                scheduleRandomAutoSend();
+            }
             checkEnvelopeStatus(); 
             updateUI();
             if (settings.customBubbleCss) {
@@ -522,6 +533,7 @@ const saveData = async () => {
         { key: 'customThemes',           val: () => localforage.setItem(`${APP_PREFIX}customThemes`, customThemes) },
         { key: 'themeSchemes',           val: () => localforage.setItem(`${APP_PREFIX}themeSchemes`, themeSchemes) },
         { key: 'chatMessages',           val: () => localforage.setItem(getStorageKey('chatMessages'), messages) },
+        { key: 'favoriteGroups',         val: () => localforage.setItem(getStorageKey('favoriteGroups'), favoriteGroups) },
     ];
 
     const partnerAvatarSrc = (() => {
@@ -568,6 +580,121 @@ const saveData = async () => {
 
     _backupCriticalData();
 };
+
+/* ============================ 收藏分组 ============================
+   结构：favoriteGroups = [{ id, createdAt, name, legacy?, messageIds: [] }]
+   同一次收藏动作（单条/批量勾选确认）的消息归入同一个收藏组。
+   message.favorited 为冗余标记，始终与分组成员关系保持同步。
+================================================================== */
+const _sameMsgId = (a, b) => String(a) === String(b);
+
+function _normalizeFavGroups(raw) {
+    if (!Array.isArray(raw)) return [];
+    return raw
+        .filter(g => g && Array.isArray(g.messageIds))
+        .map(g => ({
+            id: g.id || ('fg_' + Date.now() + '_' + Math.floor(Math.random() * 1e4)),
+            createdAt: g.createdAt || new Date().toISOString(),
+            name: typeof g.name === 'string' ? g.name : '',
+            legacy: !!g.legacy,
+            messageIds: g.messageIds.slice()
+        }));
+}
+
+// 新旧数据兼容：以「消息仍存在 + favorited 标记」为准清理组成员，
+// 再把散落在组外的旧收藏打包进一个「以前的收藏」组。返回是否发生变更。
+function _migrateLegacyFavorites() {
+    if (!Array.isArray(favoriteGroups)) favoriteGroups = [];
+    let changed = false;
+    const exists = (id) => messages.some(m => _sameMsgId(m.id, id));
+
+    favoriteGroups.forEach(g => {
+        const before = g.messageIds.length;
+        // 去掉已删除消息 / 系统消息 / favorited 标记丢失的成员
+        g.messageIds = g.messageIds.filter(id => {
+            const m = messages.find(x => _sameMsgId(x.id, id));
+            return m && m.type !== 'system' && m.favorited === true;
+        });
+        if (g.messageIds.length !== before) changed = true;
+    });
+    const emptyBefore = favoriteGroups.length;
+    favoriteGroups = favoriteGroups.filter(g => g.messageIds.length > 0);
+    if (favoriteGroups.length !== emptyBefore) changed = true;
+
+    const inGroup = new Set();
+    favoriteGroups.forEach(g => g.messageIds.forEach(id => inGroup.add(String(id))));
+    const loose = messages
+        .filter(m => m.favorited === true && m.type !== 'system' && !inGroup.has(String(m.id)))
+        .map(m => m.id);
+    if (loose.length > 0) {
+        favoriteGroups.unshift({
+            id: 'fg_legacy_' + Date.now(),
+            createdAt: new Date().toISOString(),
+            name: '以前的收藏',
+            legacy: true,
+            messageIds: loose
+        });
+        changed = true;
+    }
+    return changed;
+}
+
+// 一次收藏动作：单条传 [id]，批量传整个选中数组，全部进入同一个新组
+function addToFavorites(ids) {
+    const list = (Array.isArray(ids) ? ids : [ids]).filter(id => messages.some(m => _sameMsgId(m.id, id)));
+    if (list.length === 0) return null;
+    const idSet = new Set(list.map(String));
+    favoriteGroups.forEach(g => {
+        g.messageIds = g.messageIds.filter(mid => !idSet.has(String(mid)));
+    });
+    const group = {
+        id: 'fg_' + Date.now() + '_' + Math.floor(Math.random() * 1e4),
+        createdAt: new Date().toISOString(),
+        name: '',
+        messageIds: list
+    };
+    favoriteGroups.push(group);
+    favoriteGroups = favoriteGroups.filter(g => g.messageIds.length > 0);
+    list.forEach(id => {
+        const m = messages.find(x => _sameMsgId(x.id, id));
+        if (m) m.favorited = true;
+    });
+    throttledSaveData();
+    return group;
+}
+
+// 将单条消息移出收藏（所在组中移除，空组删除）
+function removeFromFavorites(id) {
+    let changed = false;
+    favoriteGroups.forEach(g => {
+        const next = g.messageIds.filter(mid => !_sameMsgId(mid, id));
+        if (next.length !== g.messageIds.length) changed = true;
+        g.messageIds = next;
+    });
+    if (changed) {
+        favoriteGroups = favoriteGroups.filter(g => g.messageIds.length > 0);
+        const m = messages.find(x => _sameMsgId(x.id, id));
+        if (m) m.favorited = false;
+        throttledSaveData();
+    }
+}
+
+// 整组取消收藏
+function removeFavoriteGroup(groupId) {
+    const g = favoriteGroups.find(x => x.id === groupId);
+    if (!g) return;
+    g.messageIds.forEach(id => {
+        const m = messages.find(x => _sameMsgId(x.id, id));
+        if (m) m.favorited = false;
+    });
+    favoriteGroups = favoriteGroups.filter(x => x.id !== groupId);
+    throttledSaveData();
+}
+window.addToFavorites = addToFavorites;
+window.removeFromFavorites = removeFromFavorites;
+window.removeFavoriteGroup = removeFavoriteGroup;
+window._migrateLegacyFavorites = _migrateLegacyFavorites;
+window._normalizeFavGroups = _normalizeFavGroups;
 
         function initializeRandomUI() {
 
@@ -734,6 +861,10 @@ function manageAutoSendTimer() {
         clearInterval(autoSendTimer);
         autoSendTimer = null;
     }
+    if (_autoSendRandomTimer) {
+        clearTimeout(_autoSendRandomTimer);
+        _autoSendRandomTimer = null;
+    }
     if (settings.autoSendEnabled) {
         const intervalMs = settings.autoSendInterval * 60 * 1000;
         
@@ -742,6 +873,32 @@ function manageAutoSendTimer() {
                 simulateReply(); 
             }
         }, intervalMs);
+    }
+}
+
+// 随机发送定时器（互斥模式，与 autoSendEnabled 不能同时开启）
+let _autoSendRandomTimer = null;
+function scheduleRandomAutoSend() {
+    if (_autoSendRandomTimer) clearTimeout(_autoSendRandomTimer);
+    if (!settings.autoSendRandomEnabled) return;
+    
+    // 随机间隔：3-30 分钟
+    const randomMinutes = 3 + Math.random() * 27;
+    const delayMs = randomMinutes * 60 * 1000;
+    
+    _autoSendRandomTimer = setTimeout(() => {
+        if (!document.body.classList.contains('batch-favorite-mode')) {
+            simulateReply();
+        }
+        // 继续安排下一次
+        scheduleRandomAutoSend();
+    }, delayMs);
+}
+
+function stopRandomAutoSend() {
+    if (_autoSendRandomTimer) {
+        clearTimeout(_autoSendRandomTimer);
+        _autoSendRandomTimer = null;
     }
 }
 
@@ -1045,17 +1202,28 @@ function manageAutoSendTimer() {
                 messageDiv.innerHTML = messageHTML;
 
                 let actionsHTML = '';
-                
-                if (settings.replyEnabled) actionsHTML += `<button class="meta-action-btn reply-btn" title="回复"><i class="fas fa-reply"></i></button>`;
-                
-                const starIcon = msg.favorited ? 'fas fa-star' : 'far fa-star'; 
-                actionsHTML += `<button class="meta-action-btn favorite-action-btn ${msg.favorited ? 'favorited' : ''}" title="${msg.favorited ? '取消收藏' : '收藏'}"><i class="${starIcon}"></i></button>`;
-                
 
-actionsHTML += `<button class="meta-action-btn delete-btn" title="删除"><i class="fas fa-trash-alt"></i></button>`;
+                // 顺序与新手引导一致：收藏、回复、注释、删除
+                const starIcon = msg.favorited ? 'fas fa-star' : 'far fa-star';
+                actionsHTML += `<button class="meta-action-btn favorite-action-btn ${msg.favorited ? 'favorited' : ''}" title="${msg.favorited ? '取消收藏' : '收藏'}"><i class="${starIcon}"></i></button>`;
+
+                if (settings.replyEnabled) actionsHTML += `<button class="meta-action-btn reply-btn" title="回复"><i class="fas fa-reply"></i></button>`;
+
+                actionsHTML += `<button class="meta-action-btn note-btn ${msg.note ? 'has-note' : ''}" title="注释"><i class="fas fa-sticky-note"></i></button>`;
+
+                actionsHTML += `<button class="meta-action-btn delete-btn" title="删除"><i class="fas fa-trash-alt"></i></button>`;
                 const actionsDiv = document.createElement('div');
                 actionsDiv.className = 'message-meta-actions';
                 actionsDiv.innerHTML = actionsHTML;
+
+                // 注释展示条（有备注时显示在气泡下方）
+                let noteDiv = null;
+                if (msg.note && msg.note.trim()) {
+                    noteDiv = document.createElement('div');
+                    noteDiv.className = 'message-note';
+                    const noteEscaped = msg.note.replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/\n/g, '<br>');
+                    noteDiv.innerHTML = `<i class="fas fa-sticky-note"></i><span class="message-note-text">${noteEscaped}</span>`;
+                }
 
                 let metaHTML = '';
                 
@@ -1105,9 +1273,11 @@ actionsHTML += `<button class="meta-action-btn delete-btn" title="删除"><i cla
                          }
                     }
                     metaDiv.innerHTML = metaHTML;
-                    contentWrapper.append(actionsDiv, messageDiv, metaDiv);
+                    if (noteDiv) contentWrapper.append(actionsDiv, messageDiv, noteDiv, metaDiv);
+                    else contentWrapper.append(actionsDiv, messageDiv, metaDiv);
                 } else {
-                    contentWrapper.append(actionsDiv, messageDiv);
+                    if (noteDiv) contentWrapper.append(actionsDiv, messageDiv, noteDiv);
+                    else contentWrapper.append(actionsDiv, messageDiv);
                 }
                 wrapper.appendChild(contentWrapper);
                 fragment.appendChild(wrapper);
@@ -1724,7 +1894,7 @@ function showModal(modalElement, focusElement = null) {
                         exportDate: new Date().toISOString(),
                         exportModules: []
                     };
-                    if (inclMsgs)     { exportObj.messages = messages; exportObj.exportModules.push('messages'); }
+                    if (inclMsgs)     { exportObj.messages = messages; exportObj.favoriteGroups = favoriteGroups; exportObj.exportModules.push('messages'); }
                     if (inclSettings) {
                         exportObj.settings = settings;
                         exportObj.exportModules.push('settings');
@@ -1735,10 +1905,29 @@ function showModal(modalElement, focusElement = null) {
                     if (inclReplies)  {
                         exportObj.customReplies = customReplies;
                         if (customEmojis && customEmojis.length > 0) exportObj.customEmojis = customEmojis;
+                        // 补全其他字卡相关数据
+                        if (typeof customReplyGroups !== 'undefined') exportObj.customReplyGroups = customReplyGroups;
+                        if (typeof customPokes !== 'undefined') exportObj.customPokes = customPokes;
+                        if (typeof customStatuses !== 'undefined') exportObj.customStatuses = customStatuses;
+                        if (typeof customMottos !== 'undefined') exportObj.customMottos = customMottos;
+                        if (typeof customIntros !== 'undefined') exportObj.customIntros = customIntros;
                         exportObj.exportModules.push('customReplies');
                     }
                     if (inclAnn)      { exportObj.anniversaries = anniversaries; exportObj.exportModules.push('anniversaries'); }
-                    if (inclThemes)   { exportObj.customThemes = customThemes; exportObj.stickerLibrary = stickerLibrary; exportObj.exportModules.push('themes'); }
+                    if (inclThemes)   {
+                        exportObj.customThemes = customThemes;
+                        exportObj.stickerLibrary = stickerLibrary;
+                        if (typeof myStickerLibrary !== 'undefined') exportObj.myStickerLibrary = myStickerLibrary;
+                        if (typeof themeSchemes !== 'undefined') exportObj.themeSchemes = themeSchemes;
+                        exportObj.exportModules.push('themes');
+                    }
+                    // 朋友圈相关数据（始终随设置一起导出，避免数据不完整）
+                    if (typeof momentsTexts !== 'undefined' && momentsTexts.length > 0) exportObj.momentsTexts = momentsTexts;
+                    if (typeof momentsReplies !== 'undefined' && momentsReplies.length > 0) exportObj.momentsReplies = momentsReplies;
+                    if (typeof momentsPosts !== 'undefined' && momentsPosts.length > 0) exportObj.momentsPosts = momentsPosts;
+                    if (typeof momentsSettings !== 'undefined') exportObj.momentsSettings = momentsSettings;
+                    // 梦角人设数据
+                    if (typeof partnerPersonas !== 'undefined' && partnerPersonas.length > 0) exportObj.partnerPersonas = partnerPersonas;
 
                     const dataStr = JSON.stringify(exportObj, null, 2);
                     const parts = exportObj.exportModules.join('+');
@@ -1832,7 +2021,7 @@ function showModal(modalElement, focusElement = null) {
                     overlay.addEventListener('click', ev => { if (ev.target === overlay) closeDialog(); });
                     document.getElementById('_imp_cancel').onclick = closeDialog;
 
-                    document.getElementById('_imp_confirm').onclick = function() {
+                    document.getElementById('_imp_confirm').onclick = async function() {
                         const doMsgs     = hasMessages  && document.getElementById('_imp_msgs')?.checked;
                         const doSettings = hasSettings  && document.getElementById('_imp_settings')?.checked;
                         const doReplies  = hasReplies   && document.getElementById('_imp_replies')?.checked;
@@ -1844,11 +2033,20 @@ function showModal(modalElement, focusElement = null) {
                             return;
                         }
 
-                        if (doMsgs && messages.length > 0 && !confirm('导入将覆盖当前会话的聊天记录，确定继续吗？')) return;
+                        if (doMsgs && messages.length > 0) {
+                            const ok = await uiConfirm({ title: '覆盖聊天记录', message: '导入将覆盖当前会话的聊天记录（含收藏分组），确定继续吗？', confirmText: '继续', danger: true });
+                            if (!ok) return;
+                        }
                         closeDialog();
 
                         if (doMsgs) {
                             messages = importedData.messages.map(m => ({ ...m, timestamp: new Date(m.timestamp) }));
+                            // 收藏分组：新备份直接带入；旧备份无分组时置空，交由迁移逻辑按 favorited 标记补建
+                            favoriteGroups = Array.isArray(importedData.favoriteGroups)
+                                ? _normalizeFavGroups(importedData.favoriteGroups)
+                                : [];
+                            // 清理失效成员（消息不存在/系统消息）+ 旧版散收藏自动归入「以前的收藏」
+                            _migrateLegacyFavorites();
                         }
                         if (doSettings) {
                             if (importedData.settings) {
@@ -1862,12 +2060,27 @@ function showModal(modalElement, focusElement = null) {
                             if (importedData.dgCustomData) { try { localStorage.setItem('dg_custom_data', JSON.stringify(importedData.dgCustomData)); } catch(e2) {} }
                             if (importedData.dgStatusPool) { try { localStorage.setItem('dg_status_pool', JSON.stringify(importedData.dgStatusPool)); } catch(e2) {} }
                             if (importedData.customWeatherMap) { try { Object.keys(importedData.customWeatherMap).forEach(wk => localStorage.setItem(wk, importedData.customWeatherMap[wk])); } catch(e2) {} }
+                            // 导入梦角人设数据
+                            if (importedData.partnerPersonas && Array.isArray(importedData.partnerPersonas)) partnerPersonas = importedData.partnerPersonas;
                         }
                         if (doReplies  && importedData.customReplies)  customReplies  = importedData.customReplies;
                         if (doReplies  && importedData.customEmojis && Array.isArray(importedData.customEmojis)) customEmojis = importedData.customEmojis;
+                        // 补全其他字卡相关数据的导入
+                        if (doReplies && importedData.customReplyGroups && Array.isArray(importedData.customReplyGroups)) customReplyGroups = importedData.customReplyGroups;
+                        if (doReplies && importedData.customPokes && Array.isArray(importedData.customPokes)) customPokes = importedData.customPokes;
+                        if (doReplies && importedData.customStatuses && Array.isArray(importedData.customStatuses)) customStatuses = importedData.customStatuses;
+                        if (doReplies && importedData.customMottos && Array.isArray(importedData.customMottos)) customMottos = importedData.customMottos;
+                        if (doReplies && importedData.customIntros && Array.isArray(importedData.customIntros)) customIntros = importedData.customIntros;
                         if (doAnn      && importedData.anniversaries)   anniversaries  = importedData.anniversaries;
                         if (doThemes   && importedData.customThemes)    customThemes   = importedData.customThemes;
                         if (doThemes   && importedData.stickerLibrary)  stickerLibrary = importedData.stickerLibrary;
+                        if (doThemes   && importedData.myStickerLibrary && Array.isArray(importedData.myStickerLibrary)) myStickerLibrary = importedData.myStickerLibrary;
+                        if (doThemes   && importedData.themeSchemes && Array.isArray(importedData.themeSchemes)) themeSchemes = importedData.themeSchemes;
+                        // 朋友圈相关数据导入（随设置一起导入）
+                        if (importedData.momentsTexts && Array.isArray(importedData.momentsTexts)) momentsTexts = importedData.momentsTexts;
+                        if (importedData.momentsReplies && Array.isArray(importedData.momentsReplies)) momentsReplies = importedData.momentsReplies;
+                        if (importedData.momentsPosts && Array.isArray(importedData.momentsPosts)) momentsPosts = importedData.momentsPosts;
+                        if (importedData.momentsSettings) momentsSettings = importedData.momentsSettings;
 
                         saveData();
                         if (doMsgs && typeof renderMessages === 'function') renderMessages();

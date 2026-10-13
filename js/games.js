@@ -804,20 +804,37 @@ function renderFavorites() {
     const list = document.getElementById('favorites-list');
     if (!list) return;
 
-    const favoritedMessages = (typeof messages !== 'undefined' ? messages : [])
-        .filter(m => m.favorited && m.type !== 'system');
+    const allMsgs = (typeof messages !== 'undefined' ? messages : []);
+    const groups = (typeof favoriteGroups !== 'undefined' && Array.isArray(favoriteGroups)) ? favoriteGroups : [];
 
-    if (favoritedMessages.length === 0) {
+    // 解析每个收藏组：组内消息按对话时间升序，自动剔除已不存在的消息引用
+    const resolved = groups.map(g => {
+        const msgs = g.messageIds
+            .map(id => allMsgs.find(m => String(m.id) === String(id)))
+            .filter(m => m && m.type !== 'system')
+            .sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
+        return { group: g, msgs };
+    }).filter(x => x.msgs.length > 0);
+
+    // 普通组按收藏时间倒序；迁移来的「以前的收藏」统一垫底
+    resolved.sort((a, b) => {
+        if (a.group.legacy !== b.group.legacy) return a.group.legacy ? 1 : -1;
+        return new Date(b.group.createdAt) - new Date(a.group.createdAt);
+    });
+
+    if (resolved.length === 0) {
         list.innerHTML = `
             <div class="stats-empty-state">
                 <div class="stats-empty-icon"><i class="fas fa-star"></i></div>
                 <h3>收藏夹空空如也</h3>
-                <p>点击消息旁的 ☆ 星标即可收藏</p>
+                <p>点击或长按任意消息，在操作菜单中选择 ⭐ 收藏<br>批量收藏的多条消息会打包为同一组</p>
             </div>`;
         return;
     }
 
-    list.innerHTML = favoritedMessages.map(msg => {
+    const escapeHtml = s => String(s).replace(/</g, '&lt;').replace(/>/g, '&gt;');
+
+    const renderMsgCard = (msg) => {
         const isUser = msg.sender === 'user';
         const senderName = isUser
             ? ((typeof settings !== 'undefined' && settings.myName) || '我')
@@ -827,7 +844,7 @@ function renderFavorites() {
             hour: '2-digit', minute: '2-digit'
         }) : '';
         const content = msg.text
-            ? msg.text.replace(/</g, '&lt;').replace(/>/g, '&gt;')
+            ? escapeHtml(msg.text)
             : (msg.image ? `<img src="${msg.image}" style="max-width:100%;max-height:180px;border-radius:8px;display:block;margin-top:4px;cursor:pointer;" onclick="if(typeof viewImage==='function')viewImage('${msg.image.replace(/'/g,'\\\'')}')" loading="lazy">` : '');
         const avatarEl = isUser
             ? (typeof DOMElements !== 'undefined' ? DOMElements.me.avatar : null)
@@ -836,41 +853,89 @@ function renderFavorites() {
         const avatarHtml = avatarImg
             ? `<img src="${avatarImg.src}" style="width:28px;height:28px;border-radius:50%;object-fit:cover;flex-shrink:0;">`
             : `<div style="width:28px;height:28px;border-radius:50%;background:rgba(var(--accent-color-rgb),0.15);display:flex;align-items:center;justify-content:center;flex-shrink:0;"><i class="fas fa-user" style="font-size:11px;color:var(--accent-color);"></i></div>`;
+        const noteHtml = msg.note && msg.note.trim()
+            ? `<div style="display:flex;align-items:flex-start;gap:6px;margin-top:6px;padding:6px 10px;border-radius:8px;background:rgba(255,193,7,0.10);border-left:3px solid #ffc107;font-size:11.5px;line-height:1.55;color:var(--text-secondary);"><i class="fas fa-sticky-note" style="color:#ffc107;font-size:11px;margin-top:2px;flex-shrink:0;"></i><span style="word-break:break-word;white-space:pre-wrap;">${escapeHtml(msg.note)}</span></div>`
+            : '';
         return `
             <div class="fav-item" style="
                 display:flex;flex-direction:column;gap:4px;
-                padding:12px 14px;border-radius:12px;
-                background:var(--primary-bg);
+                padding:10px 12px;border-radius:10px;
+                background:var(--secondary-bg);
                 border:1px solid var(--border-color);
-                margin-bottom:10px;
                 position:relative;
             ">
-                <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px;">
+                <div style="display:flex;align-items:center;gap:8px;margin-bottom:2px;">
                     ${avatarHtml}
                     <span style="font-size:12px;font-weight:600;color:var(--accent-color);">${senderName}</span>
-                    <span style="font-size:11px;color:var(--text-secondary);margin-left:auto;padding-right:24px;">${ts}</span>
+                    <span style="font-size:11px;color:var(--text-secondary);margin-left:auto;padding-right:22px;">${ts}</span>
                 </div>
                 <div style="font-size:13px;color:var(--text-primary);line-height:1.5;word-break:break-word;">${content}</div>
+                ${noteHtml}
                 <button class="fav-remove-btn" data-id="${msg.id}" style="
-                    position:absolute;top:8px;right:10px;
+                    position:absolute;top:6px;right:8px;
                     background:none;border:none;cursor:pointer;
-                    color:var(--text-secondary);font-size:14px;padding:2px 4px;
-                    opacity:0.6;
-                " title="取消收藏"><i class="fas fa-star" style="color:var(--accent-color);"></i></button>
+                    color:var(--text-secondary);font-size:13px;padding:2px 4px;
+                    opacity:0.65;
+                " title="移出收藏"><i class="fas fa-star" style="color:var(--accent-color);"></i></button>
+            </div>`;
+    };
+
+    list.innerHTML = resolved.map(({ group, msgs }) => {
+        const groupTitle = group.legacy
+            ? (group.name || '以前的收藏')
+            : `收藏于 ${new Date(group.createdAt).toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })}`;
+        return `
+            <div class="fav-group" data-gid="${group.id}" style="
+                margin-bottom:14px;border-radius:14px;overflow:hidden;
+                border:1.5px solid var(--border-color);background:var(--primary-bg);
+            ">
+                <div style="
+                    display:flex;align-items:center;gap:8px;
+                    padding:10px 14px;
+                    background:rgba(var(--accent-color-rgb),0.08);
+                    border-bottom:1px solid var(--border-color);
+                ">
+                    <i class="fas fa-folder-open" style="color:var(--accent-color);font-size:13px;"></i>
+                    <span style="font-size:12.5px;font-weight:700;color:var(--text-primary);">${escapeHtml(groupTitle)}</span>
+                    <span style="font-size:11px;color:var(--text-secondary);">${msgs.length} 条</span>
+                    <button class="fav-group-remove" data-gid="${group.id}" style="
+                        margin-left:auto;background:none;border:none;cursor:pointer;
+                        color:var(--text-secondary);font-size:12px;
+                        display:flex;align-items:center;gap:4px;padding:4px 8px;border-radius:8px;
+                    " title="整组取消收藏"><i class="fas fa-trash-alt"></i>整组取消</button>
+                </div>
+                <div style="display:flex;flex-direction:column;gap:8px;padding:10px 12px;">
+                    ${msgs.map(renderMsgCard).join('')}
+                </div>
             </div>`;
     }).join('');
 
+    // 单条移出收藏
     list.querySelectorAll('.fav-remove-btn').forEach(btn => {
         btn.addEventListener('click', (e) => {
             e.stopPropagation();
-            const id = Number(btn.dataset.id);
-            const msg = (typeof messages !== 'undefined' ? messages : []).find(m => m.id === id);
+            const rawId = btn.dataset.id;
+            const msg = allMsgs.find(m => String(m.id) === String(rawId));
             if (msg) {
-                msg.favorited = false;
-                if (typeof throttledSaveData === 'function') throttledSaveData();
-                if (typeof showNotification === 'function') showNotification('已取消收藏', 'success', 1500);
+                removeFromFavorites(msg.id);
+                if (typeof showNotification === 'function') showNotification('已移出收藏', 'success', 1200);
                 renderFavorites();
+                if (typeof renderMessages === 'function') renderMessages(true);
             }
+        });
+    });
+
+    // 整组取消收藏
+    list.querySelectorAll('.fav-group-remove').forEach(btn => {
+        btn.addEventListener('click', async (e) => {
+            e.stopPropagation();
+            const gid = btn.dataset.gid;
+            const ok = await uiConfirm({ title: '整组取消收藏', message: '确定把这一组消息全部移出收藏夹吗？（不会删除聊天消息）', confirmText: '移出收藏', danger: true });
+            if (!ok) return;
+            removeFavoriteGroup(gid);
+            if (typeof showNotification === 'function') showNotification('已取消整组收藏', 'success', 1200);
+            renderFavorites();
+            if (typeof renderMessages === 'function') renderMessages(true);
         });
     });
 }
@@ -1351,6 +1416,7 @@ function initComboMenu() {
         const wrapper = document.createElement('div');
         wrapper.className = 'poke-list-view';
 
+        // 顶部：一次性自定义动作（不加入快捷列表）
         const customBtn = document.createElement('button');
         customBtn.className = 'custom-poke-btn';
         customBtn.innerHTML = '<i class="fas fa-pen"></i> 自定义动作';
@@ -1361,38 +1427,82 @@ function initComboMenu() {
         };
         wrapper.appendChild(customBtn);
 
-        const userPresets = [
-            "拍了拍对方的头",
-            "戳了戳对方的脸颊",
-            "抱住了对方",
-            "给对方比了个心",
-            "牵起了对方的手",
-            "看着对方发呆"
-        ];
+        // 快捷动作标题行 + 面板内添加入口（无需进设置）
+        const titleRow = document.createElement('div');
+        titleRow.className = 'poke-quick-header';
+        titleRow.innerHTML = '<span>快捷动作</span>';
+        const addQuickBtn = document.createElement('button');
+        addQuickBtn.className = 'poke-add-btn';
+        addQuickBtn.innerHTML = '<i class="fas fa-plus"></i> 添加';
+        addQuickBtn.onclick = async (e) => {
+            e.stopPropagation();
+            const val = await uiPrompt({
+                title: '添加快捷动作',
+                placeholder: '例如：揉了揉对方的头发',
+                confirmText: '添加'
+            });
+            const text = (val || '').trim();
+            if (!text) return;
+            if (customPokes.some(p => p === text)) {
+                showNotification('这个快捷动作已经存在啦', 'warning');
+                return;
+            }
+            customPokes.unshift(text);
+            throttledSaveData();
+            showNotification('已添加快捷动作', 'success', 1200);
+            renderUserPokeMenu();
+        };
+        titleRow.appendChild(addQuickBtn);
+        wrapper.appendChild(titleRow);
 
-        const title = document.createElement('div');
-        title.style.fontSize = '12px';
-        title.style.color = 'var(--text-secondary)';
-        title.style.marginBottom = '5px';
-        title.innerText = '快捷动作';
-        wrapper.appendChild(title);
+        if (!customPokes || customPokes.length === 0) {
+            const empty = document.createElement('div');
+            empty.className = 'poke-quick-empty';
+            empty.innerHTML = '<i class="fas fa-hand-sparkles"></i><span>还没有快捷动作，点右上角「添加」创建一个吧</span>';
+            wrapper.appendChild(empty);
+        }
 
-        userPresets.forEach(text => {
+        customPokes.forEach((text, idx) => {
             const item = document.createElement('div');
             item.className = 'poke-quick-item';
-            item.innerText = text;
-            item.onclick = (e) => {
+
+            const label = document.createElement('span');
+            label.className = 'poke-quick-text';
+            label.innerText = text;
+            label.onclick = (e) => {
                 e.stopPropagation();
                 addMessage({
                     id: Date.now(),
-                    text: _formatPokeText(`${settings.myName} ${text}`), 
+                    text: _formatPokeText(`${settings.myName} ${text}`),
                     timestamp: new Date(),
-                    type: 'system' 
+                    type: 'system'
                 });
                 picker.classList.remove('active');
-                
+
                 setTimeout(simulateReply, 1500);
             };
+
+            const delBtn = document.createElement('button');
+            delBtn.className = 'poke-quick-del';
+            delBtn.title = '删除快捷动作';
+            delBtn.innerHTML = '<i class="fas fa-times"></i>';
+            delBtn.onclick = async (e) => {
+                e.stopPropagation();
+                const ok = await uiConfirm({
+                    title: '删除快捷动作',
+                    message: `确定删除「${text}」吗？`,
+                    confirmText: '删除',
+                    danger: true
+                });
+                if (!ok) return;
+                customPokes.splice(idx, 1);
+                throttledSaveData();
+                showNotification('已删除', 'success', 1000);
+                renderUserPokeMenu();
+            };
+
+            item.appendChild(label);
+            item.appendChild(delBtn);
             wrapper.appendChild(item);
         });
 

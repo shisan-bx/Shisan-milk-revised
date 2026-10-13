@@ -569,7 +569,7 @@
         </div>
         <div>
             <div style="font-size: 14px; font-weight: 600; color: var(--text-primary); letter-spacing: 0.5px;">传讯专属画廊</div>
-            <div style="font-size: 11px; color: var(--text-secondary); margin-top: 2px;">获取气泡等素材</div>
+            <div style="font-size: 11px; color: var(--text-secondary); margin-top: 2px;">获取气泡等素材 · 可能有些慢，需要🪜</div>
         </div>
     </div>
     <i class="fas fa-chevron-right" style="color: var(--accent-color); opacity: 0.7;"></i>
@@ -1052,7 +1052,7 @@
                     <div class="cs-card">
                         <div class="setting-pill-row" id="auto-send-toggle">
                             <span class="setting-pill-icon"><i class="fas fa-paper-plane"></i></span>
-                            <span class="setting-pill-label">主动发消息给我</span>
+                            <span class="setting-pill-label">定时主动发送 <span style="font-size:11px;color:var(--text-secondary);font-weight:400;">固定间隔发送消息</span></span>
                             <div class="setting-pill-switch"><div class="setting-pill-knob"></div></div>
                         </div>
                         <div id="auto-send-control" style="display:none;">
@@ -1061,6 +1061,11 @@
                                 <input type="range" min="1" max="120" step="1" value="5" class="font-size-slider" id="auto-send-slider">
                                 <span class="cs-slider-val" id="auto-send-value">5分钟</span>
                             </div>
+                        </div>
+                        <div class="setting-pill-row" id="auto-send-random-toggle" style="margin-top:8px;border-top:1px solid var(--border-color);padding-top:10px;">
+                            <span class="setting-pill-icon"><i class="fas fa-dice"></i></span>
+                            <span class="setting-pill-label">随机主动发送 <span style="font-size:11px;color:var(--text-secondary);font-weight:400;">随机时间 + 随机间隔</span></span>
+                            <div class="setting-pill-switch"><div class="setting-pill-knob"></div></div>
                         </div>
                     </div>
 
@@ -1746,16 +1751,20 @@
                     <h3 style="color: var(--accent-color); margin-bottom: 10px;">特别鸣谢</h3>
                     <div style="text-align: center; margin: 15px 0; padding: 10px; background-color: #f8f9fa; border-radius: 8px; border-left: 4px solid var(--accent-color);">
                         <p style="margin: 5px 0; color: var(--text-primary);">
+                            二改的<strong>https://xmilkdzcx.netlify.app/</strong>
+                        </p>
+                        <p style="margin: 5px 0; color: var(--text-primary);">
                             参考了 <strong>B站 @molina-3- 的传讯网站</strong>
                         </p>
-                        <p style="margin: 5px 0; font-weight: bold; color: #e53935;">
-                            如果需要更好的沟通体验 请支持哦！
-                        </p>
+                        
                     </div>
                     <p>感谢 <strong>@苏铂潼</strong></p>
                     <p style="font-size: 12px; opacity: 0.8;">小红书号：9568228497</p>
                     <p style="font-size: 12px; margin-top: 5px; font-style: italic;">(聊天统计部分代码参考)</p>
                 </div>
+                    <p style="margin: 5px 0; font-weight: bold; color: #e53935;">
+                            以上是之前网站的致谢此地只是沿用
+                    </p>
                 <div style="margin-top: 15px;">
                     <p style="font-weight: bold; color: var(--text-primary); text-align: center;">
                         原创：小红书 @milk (1149615009)
@@ -1764,6 +1773,11 @@
                         此代码绝对禁止商用和盈利行为，一旦发现追究到底
                     </p>
                     <p style="text-align: center; margin-bottom: 15px;">支持二改二传，感谢使用！</p>
+                    <div style="text-align: center; margin: 18px 0 10px;">
+                        <p style="margin: 0 0 10px; color: var(--text-primary);">如果想帮站主回回token的血的话，请扫描：</p>
+                        <img src="images/donate-qr.jpeg" alt="赞赏码" style="max-width: 220px; width: 70%; border-radius: 10px; border: 1px solid var(--border-color); display: block; margin: 0 auto;">
+                        <p style="margin: 10px 0 0; font-size: 13px; color: var(--accent-color); font-weight: bold;">滑跪感谢各位大人投喂</p>
+                    </div>
                     <li style="text-align: center; font-size: 1.1em; color: #8A2BE2; list-style: none; margin: 5px 0;"><b>反对性别暴力</b></li>
                     <li style="text-align: center; font-size: 1.1em; color: #8A2BE2; list-style: none; margin: 5px 0;"><b>尊重不该是奢求,安全必须是底线</b></li>
                 </div>
@@ -1929,6 +1943,9 @@
         <div class="full-view">
             <div class="minimize-btn" id="minimize-btn" title="收起">
                 <svg viewBox="0 0 24 24"><path d="M7.41 15.41L12 10.83l4.59 4.58L18 14l-6-6-6 6z" /></svg>
+            </div>
+            <div class="close-player-btn" id="close-player-btn" title="关闭播放器">
+                <svg viewBox="0 0 24 24"><path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z" /></svg>
             </div>
             <button id="upload-cover-btn" style="position: absolute; top: 12px; left: 15px; background: none; border: 1px dashed var(--border-color); color: var(--text-secondary); cursor: pointer; opacity: 0.7; z-index: 10; width: 24px; height: 24px; border-radius: 50%; display:flex; align-items:center; justify-content:center; font-size:12px;" title="更换专辑封面">
                 <i class="fas fa-camera"></i>

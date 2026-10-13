@@ -24,6 +24,8 @@
         let isLoadingHistory = false;
         let isBatchFavoriteMode = false;
         let selectedMessages = [];
+        // 收藏分组：[{ id, createdAt, name, messageIds: [] }]，同一次收藏动作的消息归入同一组
+        let favoriteGroups = [];
         let customReplies = [];
         let customPokes = [];
         let customStatuses = [];

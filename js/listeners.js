@@ -21,12 +21,50 @@ function setupEventListeners() {
 }
 
 function initChatActionListeners() {
+            // 从 wrapper 可靠解析消息：id 可能是整数/浮点/字符串，统一字符串比较
+            const resolveMessage = (wrapper) => {
+                const rawId = wrapper && wrapper.dataset ? wrapper.dataset.id : null;
+                if (rawId == null || rawId === '') return null;
+                return messages.find(m => String(m.id) === String(rawId)) || null;
+            };
+
+            // 同一时间只展开一个消息操作菜单
+            const closeAllMenus = (except) => {
+                DOMElements.chatContainer.querySelectorAll('.message-wrapper.menu-open').forEach(w => {
+                    if (w !== except) w.classList.remove('menu-open');
+                });
+            };
+
+            // 长按支持（移动端"长按消息弹出操作菜单"）
+            let _lpTimer = null;
+            let _lpFired = false;
+            DOMElements.chatContainer.addEventListener('touchstart', (e) => {
+                const w = e.target.closest('.message-wrapper');
+                if (!w || isBatchFavoriteMode) return;
+                _lpFired = false;
+                _lpTimer = setTimeout(() => {
+                    _lpFired = true;
+                    closeAllMenus(w);
+                    w.classList.add('menu-open');
+                    if (navigator.vibrate) navigator.vibrate(15);
+                }, 480);
+            }, { passive: true });
+            ['touchend', 'touchmove', 'touchcancel'].forEach(ev => {
+                DOMElements.chatContainer.addEventListener(ev, () => clearTimeout(_lpTimer), { passive: true });
+            });
+
             DOMElements.chatContainer.addEventListener('click', (e) => {
+                // 长按刚触发过，吞掉随后产生的 click 避免菜单立即收起
+                if (_lpFired) { _lpFired = false; return; }
+
+                const wrapper = e.target.closest('.message-wrapper');
+                if (!wrapper) return;
 
                 if (isBatchFavoriteMode) {
-                    const wrapper = e.target.closest('.message-wrapper');
-                    if (wrapper && !e.target.closest('.message-meta-actions')) {
-                        const messageId = Number(wrapper.dataset.id);
+                    if (!e.target.closest('.message-meta-actions')) {
+                        const message = resolveMessage(wrapper);
+                        if (!message) return;
+                        const messageId = message.id;
                         const index = selectedMessages.indexOf(messageId);
 
                         if (index > -1) {
@@ -41,71 +79,119 @@ function initChatActionListeners() {
                         if (confirmBtn) {
                             confirmBtn.textContent = `确认收藏 (${selectedMessages.length})`;
                         }
-                        return;
-                    }
-                }
-
-                const favoriteBtn = e.target.closest('.favorite-action-btn'); 
-                if (favoriteBtn) {
-                    const wrapper = e.target.closest('.message-wrapper');
-                    const messageId = Number(wrapper.dataset.id);
-                    const message = messages.find(m => m.id === messageId);
-                    
-                    if (message) {
-                        message.favorited = !message.favorited;
-                        
-                        showNotification(message.favorited ? '已收藏': '已取消收藏', 'success', 1500);
-                        playSound('favorite');
-                        
-                        throttledSaveData();
-                        
-                        renderMessages(true);
                     }
                     return;
                 }
 
                 const target = e.target.closest('.meta-action-btn');
-                if (!target) return;
-                
-                const wrapper = e.target.closest('.message-wrapper');
-                if (!wrapper) return; 
-                
-                const messageId = Number(wrapper.dataset.id);
-                const message = messages.find(m => m.id === messageId);
-                if (!message) return;
+                if (target) {
+                    e.stopPropagation();
+                    const message = resolveMessage(wrapper);
+                    if (!message) return;
 
-if (target.classList.contains('delete-btn')) {
-    if (confirm('确定要删除这条消息吗？')) {
-        const index = messages.findIndex(m => m.id === messageId);
-        if (index > -1) {
-            const savedScrollTop = DOMElements.chatContainer.scrollTop;
-            messages.splice(index, 1); 
-            throttledSaveData(); 
-            renderMessages(true);
-            requestAnimationFrame(() => {
-                DOMElements.chatContainer.scrollTop = savedScrollTop;
-            });
-            showNotification('消息已删除', 'success');
-        }
-    }
-    return;
-}
-                if (target.classList.contains('reply-btn')) {
-                    currentReplyTo = {
-                        id: message.id,
-                        sender: message.sender,
-                        text: message.text
-                    };
-                    updateReplyPreview();
-                    DOMElements.messageInput.focus();
-                    const targetMessageElement = DOMElements.chatContainer.querySelector(`[data-id="${message.id}"]`);
-                    if (targetMessageElement) targetMessageElement.scrollIntoView({
-                        behavior: 'smooth', block: 'center'
-                    });
+                    if (target.classList.contains('favorite-action-btn')) {
+                        if (message.favorited) {
+                            removeFromFavorites(message.id);
+                            showNotification('已取消收藏', 'success', 1500);
+                        } else {
+                            addToFavorites([message.id]);
+                            showNotification('已收藏到收藏夹', 'success', 1500);
+                            playSound('favorite');
+                        }
+                        renderMessages(true);
+                        return;
+                    }
+
+                    if (target.classList.contains('reply-btn')) {
+                        currentReplyTo = {
+                            id: message.id,
+                            sender: message.sender,
+                            text: message.text
+                        };
+                        updateReplyPreview();
+                        DOMElements.messageInput.focus();
+                        const targetMessageElement = DOMElements.chatContainer.querySelector(`[data-id="${message.id}"]`);
+                        if (targetMessageElement) targetMessageElement.scrollIntoView({
+                            behavior: 'smooth', block: 'center'
+                        });
+                        return;
+                    }
+
+                    if (target.classList.contains('note-btn')) {
+                        openNoteEditor(message);
+                        return;
+                    }
+
+                    if (target.classList.contains('delete-btn')) {
+                        uiConfirm({ title: '删除消息', message: '确定要删除这条消息吗？', confirmText: '删除', danger: true }).then(ok => {
+                            if (!ok) return;
+                            const index = messages.findIndex(m => m.id === message.id);
+                            if (index > -1) {
+                                const savedScrollTop = DOMElements.chatContainer.scrollTop;
+                                messages.splice(index, 1);
+                                throttledSaveData();
+                                renderMessages(true);
+                                requestAnimationFrame(() => {
+                                    DOMElements.chatContainer.scrollTop = savedScrollTop;
+                                });
+                                showNotification('消息已删除', 'success');
+                            }
+                        });
+                        return;
+                    }
                     return;
-                } 
-                throttledSaveData();
+                }
+
+                // 点击消息气泡本身 → 展开/收起操作菜单（引用条、图片保留各自原行为）
+                if (e.target.closest('.reply-indicator') || e.target.closest('.message-image')) return;
+                const willOpen = !wrapper.classList.contains('menu-open');
+                closeAllMenus(wrapper);
+                wrapper.classList.toggle('menu-open', willOpen);
             });
+
+            // 点击消息区域以外时收起所有菜单
+            document.addEventListener('click', (e) => {
+                if (!e.target.closest('.message-wrapper')) closeAllMenus();
+            });
+
+            // 注释弹窗：保存 / 取消
+            const noteModalEl = DOMElements.noteModal && DOMElements.noteModal.modal;
+            if (noteModalEl && !noteModalEl.dataset.bound) {
+                noteModalEl.dataset.bound = '1';
+                const noteInput = DOMElements.noteModal.input;
+                DOMElements.noteModal.save.addEventListener('click', () => {
+                    if (currentNoteMessageId == null) { hideModal(noteModalEl); return; }
+                    const message = messages.find(m => m.id === currentNoteMessageId);
+                    const val = noteInput.value.trim();
+                    if (message) {
+                        message.note = val || null;
+                        throttledSaveData();
+                        const savedScrollTop = DOMElements.chatContainer.scrollTop;
+                        renderMessages(true);
+                        requestAnimationFrame(() => { DOMElements.chatContainer.scrollTop = savedScrollTop; });
+                        showNotification(val ? '注释已保存' : '注释已清除', 'success', 1200);
+                    }
+                    currentNoteMessageId = null;
+                    noteInput.value = '';
+                    hideModal(noteModalEl);
+                });
+                noteModalEl.addEventListener('click', (e) => {
+                    if (e.target === noteModalEl) {
+                        currentNoteMessageId = null;
+                        noteInput.value = '';
+                        hideModal(noteModalEl);
+                    }
+                });
+            }
+
+            function openNoteEditor(message) {
+                if (!noteModalEl) return;
+                currentNoteMessageId = message.id;
+                DOMElements.noteModal.input.value = message.note || '';
+                showModal(noteModalEl);
+                setTimeout(() => DOMElements.noteModal.input.focus(), 60);
+            }
+            window._openNoteEditor = openNoteEditor;
 
             DOMElements.batchPreview.addEventListener('click', (e) => {
                 const removeBtn = e.target.closest('.batch-preview-remove');
@@ -1109,7 +1195,7 @@ if (_chatSettingsEl) _chatSettingsEl.addEventListener('click', () => {
                         return;
                     }
                     try {
-                        const url = (settings.callSoundUrl && settings.callSoundUrl.trim()) ? settings.callSoundUrl.trim() : '/sounds/call-ring.mp3';
+                        const url = (settings.callSoundUrl && settings.callSoundUrl.trim()) ? settings.callSoundUrl.trim() : 'sounds/call-ring.mp3';
                         previewAudio = new Audio(url);
                         previewAudio.volume = Math.min(1, Math.max(0, typeof settings.callSoundVolume === 'number' ? settings.callSoundVolume : 0.5));
                         previewAudio.addEventListener('ended', () => { previewAudio = null; });
@@ -1213,10 +1299,12 @@ const autoSendToggle = document.getElementById('auto-send-toggle');
 const autoSendControl = document.getElementById('auto-send-control');
 const autoSendSlider = document.getElementById('auto-send-slider');
 const autoSendValue = document.getElementById('auto-send-value');
+const autoSendRandomToggle = document.getElementById('auto-send-random-toggle');
 
 const updateAutoSendUI = () => {
     autoSendToggle.classList.toggle('active', !!settings.autoSendEnabled);
     autoSendControl.style.display = settings.autoSendEnabled ? "flex" : "none";
+    autoSendRandomToggle?.classList.toggle('active', !!settings.autoSendRandomEnabled);
     const currentVal = settings.autoSendInterval || 5;
     autoSendSlider.value = currentVal;
     autoSendValue.textContent = `${currentVal}分钟`;
@@ -1225,12 +1313,39 @@ const updateAutoSendUI = () => {
 updateAutoSendUI();
 
 autoSendToggle.addEventListener('click', () => {
-    settings.autoSendEnabled = !settings.autoSendEnabled;
+    // 互斥逻辑：开启定时发送时，自动关闭随机发送
+    const willEnable = !settings.autoSendEnabled;
+    if (willEnable && settings.autoSendRandomEnabled) {
+        settings.autoSendRandomEnabled = false;
+        if (typeof stopRandomAutoSend === 'function') stopRandomAutoSend();
+    }
+    settings.autoSendEnabled = willEnable;
     updateAutoSendUI();
     manageAutoSendTimer(); 
     throttledSaveData();
-    showNotification(`主动发送已${settings.autoSendEnabled ? '开启' : '关闭'}`, 'success');
+    showNotification(`定时主动发送已${willEnable ? '开启' : '关闭'}`, 'success');
 });
+
+// 随机发送开关事件（互斥逻辑）
+if (autoSendRandomToggle) {
+    autoSendRandomToggle.addEventListener('click', () => {
+        const willEnable = !settings.autoSendRandomEnabled;
+        // 互斥：开启随机发送时，自动关闭定时发送
+        if (willEnable && settings.autoSendEnabled) {
+            settings.autoSendEnabled = false;
+            manageAutoSendTimer();
+        }
+        settings.autoSendRandomEnabled = willEnable;
+        updateAutoSendUI();
+        if (willEnable) {
+            if (typeof scheduleRandomAutoSend === 'function') scheduleRandomAutoSend();
+        } else {
+            if (typeof stopRandomAutoSend === 'function') stopRandomAutoSend();
+        }
+        throttledSaveData();
+        showNotification(`随机主动发送已${willEnable ? '开启' : '关闭'}`, 'success');
+    });
+}
 
 autoSendSlider.value = settings.autoSendInterval || 5;
 autoSendValue.textContent = `${settings.autoSendInterval || 5}分钟`;
@@ -1293,7 +1408,7 @@ autoSendSlider.addEventListener('change', () => {
     const galleryBanner = document.getElementById('gallery-banner-entry');
     if (galleryBanner) {
         galleryBanner.addEventListener('click', () => {
-            window.open('https://aielin17.github.io/-/', '_blank');
+            window.open('https://gallery-cf.milk-gallery.workers.dev', '_blank');
         });
         galleryBanner.addEventListener('mousedown', () => { galleryBanner.style.transform = 'scale(0.97)'; });
         galleryBanner.addEventListener('mouseup', () => { galleryBanner.style.transform = 'scale(1)'; });
@@ -2388,6 +2503,20 @@ playlist.style.top = (rect.top + (player.classList.contains('collapsed') ? 65 : 
             playlist.classList.remove('active');
         }
     });
+
+    // 关闭播放器：与设置中关闭播放器效果一致，再次打开请到 设置 → 高级功能 → 音乐播放器
+    const closeBtn = document.getElementById('close-player-btn');
+    if (closeBtn) {
+        closeBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            settings.musicPlayerEnabled = false;
+            throttledSaveData();
+            player.classList.remove('visible');
+            player.classList.remove('collapsed');
+            playlist.classList.remove('active');
+            audio.pause();
+        });
+    }
 
     updateSongUI(0); // 初始化不加载音频，点击播放/歌曲卡片时才加载
     renderPlaylist();

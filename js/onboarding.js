@@ -261,16 +261,25 @@ const tourSteps = [
         onBefore: () => { if (isTourActive) hideModal(DOMElements.settingsModal.modal); }
     },
     {
-        element: '#favorites-btn',
+        element: '#stats-function',
         title: "⭐ 收藏夹",
-        content: "长按或点击一条消息，会弹出操作菜单，可以把消息<b>收藏</b>起来。<br><br>所有收藏的消息都会保存在这个收藏夹里，随时可以翻阅回味～",
-        position: 'bottom'
+        content: "点击这里打开「<b>消息统计 &amp; 收藏</b>」，切换到「收藏」标签就能看到收藏夹。<br><br>长按或点击一条消息，会弹出操作菜单，可以把消息<b>收藏</b>起来，随时翻阅回味～",
+        position: 'bottom',
+        onBefore: () => { if (isTourActive) showModal(DOMElements.advancedModal.modal); }
     },
     {
         element: '#session-manager-btn',
         title: "📂 会话管理",
         content: "你可以创建<b>多个独立的聊天会话</b>，每个会话都有独立的聊天记录。<br>",
-        position: 'bottom'
+        position: 'bottom',
+        onBefore: () => { if (isTourActive) hideModal(DOMElements.advancedModal.modal); }
+    },
+    {
+        element: '#moments-btn',
+        title: "📸 朋友圈",
+        content: "点击这个相机图标进入<b>朋友圈</b>，可以看到 TA 发布的动态，给 TA <b>点赞、评论</b>互动。<br><br>在朋友圈设置里还能开启<b>自动发布</b>，TA 每天会随机时间发朋友圈哦～",
+        position: 'bottom',
+        onBefore: () => { if (isTourActive) hideModal(DOMElements.advancedModal.modal); }
     },
     {
         title: "✋ 消息操作提示",

@@ -577,21 +577,70 @@ html:not([data-theme="dark"])[data-color-theme="black-white"] .message-sent{
     }
 
     // 通话铃声：发起/来电时循环播放，接通、被拒或挂断时停止
-    const DEFAULT_RING = '/sounds/call-ring.mp3';
+    // 使用相对路径兼容 file:// 协议和 http(s):// 协议
+    const DEFAULT_RING = 'sounds/call-ring.mp3';
     let _ringAudio = null;
-    function _ringStart() {
-        if (typeof settings === 'undefined' || settings.callSoundEnabled === false) return;
-        _ringStop();
+    let _ringActive = false;  // 标记铃声是否应该正在播放
+    let _ringUnlocked = false; // 是否已通过用户交互解锁音频
+
+    // 预创建并缓存铃声 Audio 对象，避免每次都重新加载
+    function _getRingAudio() {
+        if (_ringAudio) return _ringAudio;
         try {
             const url = (settings.callSoundUrl && settings.callSoundUrl.trim()) ? settings.callSoundUrl.trim() : DEFAULT_RING;
             _ringAudio = new Audio(url);
             _ringAudio.loop = true;
-            _ringAudio.volume = Math.min(1, Math.max(0, typeof settings.callSoundVolume === 'number' ? settings.callSoundVolume : 0.5));
-            _ringAudio.play().catch(() => {});
-        } catch (e) {}
+            _ringAudio.preload = 'auto';
+            return _ringAudio;
+        } catch (e) {
+            console.error('[call] 创建铃声 Audio 失败:', e);
+            return null;
+        }
     }
+
+    function _ringStart() {
+        if (typeof settings === 'undefined' || settings.callSoundEnabled === false) return;
+        _ringActive = true;
+        try {
+            const audio = _getRingAudio();
+            if (!audio) return;
+            // 更新音量设置
+            audio.volume = Math.min(1, Math.max(0, typeof settings.callSoundVolume === 'number' ? settings.callSoundVolume : 0.5));
+            // 如果是自定义铃声 URL 变化了，需要更新 src
+            const currentUrl = (settings.callSoundUrl && settings.callSoundUrl.trim()) ? settings.callSoundUrl.trim() : DEFAULT_RING;
+            if (audio.src !== currentUrl && !audio.src.endsWith(currentUrl)) {
+                audio.src = currentUrl;
+            }
+            const p = audio.play();
+            if (p && p.then) {
+                p.then(() => { _ringUnlocked = true; })
+                 .catch(e => {
+                     console.warn('[call] 铃声播放失败，尝试通过用户交互解锁:', e.message);
+                     // 自动播放被阻止时，等待下一次用户交互
+                     if (!_ringUnlocked) {
+                         const unlockOnce = () => {
+                             _ringUnlocked = true;
+                             if (_ringActive && _ringAudio) {
+                                 _ringAudio.play().catch(err => console.warn('[call] 解锁后播放仍失败:', err.message));
+                             }
+                             document.removeEventListener('touchstart', unlockOnce);
+                             document.removeEventListener('click', unlockOnce);
+                         };
+                         document.addEventListener('touchstart', unlockOnce, { once: true });
+                         document.addEventListener('click', unlockOnce, { once: true });
+                     }
+                 });
+            }
+        } catch (e) {
+            console.error('[call] _ringStart 异常:', e);
+        }
+    }
+
     function _ringStop() {
-        if (_ringAudio) { try { _ringAudio.pause(); _ringAudio.currentTime = 0; } catch (e) {} _ringAudio = null; }
+        _ringActive = false;
+        if (_ringAudio) {
+            try { _ringAudio.pause(); _ringAudio.currentTime = 0; } catch (e) {}
+        }
     }
 
     function startCall(isPartner) {
@@ -913,6 +962,18 @@ html:not([data-theme="dark"])[data-color-theme="black-white"] .message-sent{
             if (collapsedCallBtn) collapsedCallBtn.style.display = S.enabled ? '' : 'none';
             if (!S.enabled && S.active) endCall();
             S.enabled ? scheduleRandomCall() : clearTimeout(S.randomCallTimer);
+        });
+
+        // 页面从后台恢复时，重新播放被浏览器暂停的铃声
+        document.addEventListener('visibilitychange', () => {
+            if (document.visibilityState === 'visible') {
+                // 检查是否应该正在播放铃声
+                const shouldRing = S.active || document.getElementById('call-incoming-overlay')?.classList.contains('visible');
+                if (shouldRing && _ringActive && _ringAudio && _ringAudio.paused) {
+                    console.log('[call] 页面恢复可见，重新播放铃声');
+                    _ringAudio.play().catch(e => console.warn('[call] 恢复铃声播放失败:', e.message));
+                }
+            }
         });
 
         initDrag(); initPillDrag(); initResize();

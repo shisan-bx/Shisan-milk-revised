@@ -16,6 +16,7 @@ const MIME = {
     '.gif':  'image/gif',
     '.svg':  'image/svg+xml',
     '.ico':  'image/x-icon',
+    '.webp': 'image/webp',
     '.mp3':  'audio/mpeg',
     '.m4a':  'audio/mp4',
     '.mp4':  'video/mp4',
@@ -28,10 +29,10 @@ const MIME = {
 
 const server = http.createServer((req, res) => {
     let urlPath = decodeURIComponent(req.url.split('?')[0]);
-    if (urlPath === '/' || urlPath === '') urlPath = '/suoyin';
+    if (urlPath === '/' || urlPath === '') urlPath = '/index.html';
 
-    // 安全：阻止路径穿越
     const filePath = path.join(ROOT, urlPath);
+    // 安全：阻止路径穿越
     if (!filePath.startsWith(ROOT)) {
         res.writeHead(403);
         res.end('Forbidden');
@@ -40,16 +41,8 @@ const server = http.createServer((req, res) => {
 
     fs.stat(filePath, (err, stats) => {
         if (err || !stats.isFile()) {
-            // 尝试 suoyin 无扩展名 → 当 html
-            const tryHtml = filePath;
-            fs.access(tryHtml, fs.constants.R_OK, (e2) => {
-                if (e2) {
-                    res.writeHead(404);
-                    res.end('Not Found: ' + urlPath);
-                    return;
-                }
-                serveFile(tryHtml, res);
-            });
+            res.writeHead(404, { 'Content-Type': 'text/plain; charset=utf-8' });
+            res.end('Not Found: ' + urlPath);
             return;
         }
         serveFile(filePath, res);
@@ -58,7 +51,7 @@ const server = http.createServer((req, res) => {
 
 function serveFile(filePath, res) {
     const ext = path.extname(filePath).toLowerCase();
-    // 无扩展名的文件（如 suoyin）当作 HTML 处理，避免浏览器下载
+    // 无扩展名的文件当作 HTML 处理，避免浏览器下载
     const mime = MIME[ext] || (ext === '' ? 'text/html; charset=utf-8' : 'application/octet-stream');
     fs.readFile(filePath, (err, data) => {
         if (err) {
@@ -71,6 +64,18 @@ function serveFile(filePath, res) {
     });
 }
 
-server.listen(PORT, '0.0.0.0', () => {
-    console.log(`Server running at http://localhost:${PORT}/`);
+// 端口被占用时自动顺延（8000 → 8001 → 8002 …），避免 EADDRINUSE 直接崩溃
+let currentPort = PORT;
+server.on('error', (err) => {
+    if (err.code === 'EADDRINUSE' && currentPort < PORT + 20) {
+        console.log(`端口 ${currentPort} 已被占用，尝试 ${currentPort + 1} …`);
+        currentPort++;
+        server.listen(currentPort, '0.0.0.0');
+    } else {
+        console.error('服务器启动失败:', err.message);
+        process.exit(1);
+    }
+});
+server.listen(currentPort, '0.0.0.0', () => {
+    console.log(`Server running at http://localhost:${currentPort}/`);
 });

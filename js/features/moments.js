@@ -601,23 +601,36 @@
         _scheduleNext();
     }
 
-    function _scheduleNext() {
+   function _scheduleNext() {
+    _ensureDayCounter();
+    if (momentsSettings.autoPostEnabled === false) return;
+
+    // 配置区
+    const maxIntervalMin = 4320;  // 上限：3天 = 4320分钟
+    const meanMin = 360;          // 指数分布均值：6小时，可自行调整疏密
+    // ============================================
+
+    // 截断指数分布随机，浮点数毫秒级
+    let r = 1 - Math.random();
+    let expMinutes = -meanMin * Math.log(r);
+    let delayMinutes = Math.min(expMinutes, maxIntervalMin);
+    let delay = delayMinutes * 60 * 1000;
+
+    setTimeout(() => {
         _ensureDayCounter();
-        if (momentsSettings.autoPostEnabled === false) return;
-        const remaining = 2 - (momentsSettings.postedToday || 0);
-        if (remaining <= 0) return;
-        const delay = remaining >= 2 ? _rand(60, 180) * 1000 : _rand(30, 120) * 1000;
-        setTimeout(() => {
-            _ensureDayCounter();
-            if (momentsSettings.autoPostEnabled !== false && (momentsSettings.postedToday || 0) < 2) {
-                if (_hasTalked()) {
-                    _autoPostOnce();
-                } else {
-                    _scheduleNext(); // 还没开始对话，继续等待
-                }
+        if (momentsSettings.autoPostEnabled !== false) {
+            if (_hasTalked()) {
+                // 满足发布条件：执行发布，计数+1，继续调度下一次
+                _autoPostOnce();
+                momentsSettings.postedToday += 1;
+                _scheduleNext();
+            } else {
+                // 不满足发布条件，不发布，直接重新排期
+                _scheduleNext();
             }
-        }, delay);
-    }
+        }
+    }, delay);
+}
 
     /* ---------- UI 构建 ---------- */
     function _ensureUI() {
@@ -631,6 +644,7 @@
                 <button class="moments-icon-btn" id="moments-back"><i class="fas fa-arrow-left"></i></button>
                 <div class="moments-header-title">朋友圈</div>
                 <div class="moments-header-actions">
+                    <button class="moments-icon-btn" id="moments-nudge-post" title="让梦角发朋友圈"><i class="fas fa-magic"></i></button>
                     <button class="moments-icon-btn" id="moments-settings-open" title="朋友圈设置"><i class="fas fa-sliders-h"></i></button>
                     <button class="moments-icon-btn primary" id="moments-compose-open" title="发朋友圈"><i class="fas fa-pen"></i></button>
                 </div>
@@ -660,7 +674,7 @@
             <div class="moments-settings-card">
                 <div class="moments-settings-title"><i class="fas fa-sliders-h"></i> 朋友圈设置</div>
                 <div class="moments-setting-row">
-                    <label for="ms-auto">梦角自动发朋友圈<br><span class="moments-hint">开启后每天至少自动发送两条</span></label>
+                    <label for="ms-auto">梦角自动发朋友圈<br><span class="moments-hint">开启后每天随机时间自动发送，条数不设上限。至少三天内一条。</span></label>
                     <input type="checkbox" id="ms-auto" style="width:18px;height:18px;accent-color:var(--accent-color);">
                 </div>
                 <div class="moments-setting-row">
@@ -701,6 +715,30 @@
         _panel.querySelector('#moments-settings-open').addEventListener('click', () => {
             _syncSettingsUI();
             _settingsPop.classList.add('active');
+        });
+
+        // 手动让梦角立刻发一条朋友圈（文案池与自动发帖一致，避开最近重复）
+        let _nudgeCooldown = false;
+        _panel.querySelector('#moments-nudge-post').addEventListener('click', () => {
+            if (_nudgeCooldown) return;
+            const pool = _autoPostPool();
+            if (!pool.length) {
+                showNotification('朋友圈文案库是空的，先去添加文案吧', 'warning', 2200);
+                return;
+            }
+            const recent = momentsPosts.filter(p => p.author === 'partner').slice(-3).map(p => p.text);
+            let text = _pick(pool);
+            let tries = 0;
+            while (recent.includes(text) && tries < 6) { text = _pick(pool); tries++; }
+
+            _ensureDayCounter();
+            _publishPartnerPost(text);
+            momentsSettings.postedToday = (momentsSettings.postedToday || 0) + 1;
+            _save();
+
+            // 简易防连点
+            _nudgeCooldown = true;
+            setTimeout(() => { _nudgeCooldown = false; }, 2000);
         });
 
         _composerPop.addEventListener('click', (e) => { if (e.target === _composerPop) _composerPop.classList.remove('active'); });

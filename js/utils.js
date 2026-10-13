@@ -286,7 +286,8 @@ async function importAllData(file) {
                 if (typeof importChatHistory === 'function') importChatHistory(file);
                 return;
             }
-            if (!confirm('全量恢复将覆盖所有现有数据，确认继续？')) return;
+            const ok = await uiConfirm({ title: '全量恢复', message: '全量恢复将覆盖所有现有数据，确认继续？', confirmText: '恢复', danger: true });
+            if (!ok) return;
             showNotification('正在恢复数据…', 'info', 3000);
             if (data.indexedDB) {
                 for (const [k, v] of Object.entries(data.indexedDB)) {

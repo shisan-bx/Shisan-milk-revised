@@ -985,16 +985,55 @@
             transform: translateY(5px);
             transition: var(--transition);
             z-index: 2;
+            pointer-events: none;
         }
         .message-content-wrapper:hover .message-meta-actions {
             opacity: 1;
             transform: translateY(0);
+            pointer-events: auto;
         }
         .message-wrapper.sent .message-meta-actions {
             left: 0;
         }
         .message-wrapper.received .message-meta-actions {
             right: 0;
+        }
+        /* 点击/长按消息后展开操作菜单（移动端无 hover 场景） */
+        .message-wrapper.menu-open .message-meta-actions {
+            opacity: 1;
+            transform: translateY(0);
+            pointer-events: auto;
+        }
+        .message-wrapper.menu-open .message {
+            box-shadow: 0 0 0 2px rgba(var(--accent-color-rgb, 212, 175, 55), 0.35);
+        }
+        .meta-action-btn.note-btn.has-note {
+            color: #ffc107;
+        }
+        /* 消息注释展示条 */
+        .message-note {
+            display: flex;
+            align-items: flex-start;
+            gap: 6px;
+            margin: 5px 10px 0;
+            padding: 6px 10px;
+            max-width: 85%;
+            border-radius: 8px;
+            background: rgba(255, 193, 7, 0.10);
+            border-left: 3px solid #ffc107;
+            font-size: 11.5px;
+            line-height: 1.55;
+            color: var(--text-secondary);
+        }
+        .message-note i {
+            color: #ffc107;
+            font-size: 11px;
+            margin-top: 2px;
+            flex-shrink: 0;
+        }
+        .message-note-text {
+            word-break: break-word;
+            white-space: pre-wrap;
         }
 
         .meta-action-btn {
@@ -4716,16 +4755,21 @@
 
         .reply-tabs {
             display: flex;
-            padding: 0 20px 15px;
+            padding: 0 12px 15px;
             background-color: var(--secondary-bg);
-            gap: 12px;
+            gap: 10px;
             border-bottom: 1px solid var(--border-color);
-            flex-shrink: 0; 
+            flex-shrink: 0;
+            overflow-x: auto;
+            overflow-y: hidden;
+            -webkit-overflow-scrolling: touch;
+            scrollbar-width: none;
         }
+        .reply-tabs::-webkit-scrollbar { display: none; }
 
         .reply-tab-btn {
-            flex: 1;
-            padding: 10px 0;
+            flex: 0 0 auto;
+            padding: 10px 16px;
             border-radius: 20px;
 
             font-size: 14px;
@@ -4737,6 +4781,7 @@
             border: 1px solid transparent;
             position: relative;
             overflow: hidden;
+            white-space: nowrap;
         }
 
         .reply-tab-btn:hover {
@@ -6365,6 +6410,34 @@
             fill: currentColor;
         }
 
+        .close-player-btn {
+            position: absolute;
+            top: 10px;
+            right: 45px;
+            width: 24px;
+            height: 24px;
+            cursor: pointer;
+            opacity: 0.45;
+            transition: opacity 0.2s, transform 0.2s;
+            z-index: 10;
+            color: var(--text-secondary);
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        .close-player-btn:hover {
+            opacity: 1;
+            color: #ff5252;
+            transform: scale(1.15);
+            background: rgba(255, 82, 82, 0.12);
+        }
+        .close-player-btn svg {
+            width: 100%;
+            height: 100%;
+            fill: currentColor;
+        }
+
         .track-info {
             text-align: center;
             margin-top: 5px;
@@ -7142,14 +7215,18 @@
     border-bottom: 1px solid var(--border-color);
     display: flex;
     flex-direction: row;
-    padding: 10px 20px;
+    padding: 10px 12px;
     gap: 10px;
     flex-shrink: 0;
-    justify-content: center;
+    overflow-x: auto;
+    overflow-y: hidden;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
         }
+        .modal-sidebar::-webkit-scrollbar { display: none; }
 
         .sidebar-btn {
-    padding: 12px 20px;
+    padding: 10px 14px;
     border-radius: 12px;
     border: none;
     background: transparent;
@@ -7158,12 +7235,12 @@
     display: flex;
     flex-direction: row;
     align-items: center;
-    gap: 8px;
+    gap: 6px;
     transition: all 0.3s;
-    font-size: 14px;
+    font-size: 13px;
     font-weight: 500;
-    min-width: 120px;
-    justify-content: center;
+    flex-shrink: 0;
+    white-space: nowrap;
         }
 
         .sidebar-btn i {
@@ -7187,12 +7264,16 @@
         }
 
         .modal-main-view .reply-tabs {
-    padding: 15px 20px 10px;
+    padding: 15px 12px 10px;
     background-color: var(--secondary-bg);
     white-space: nowrap;
     overflow-x: auto;
+    overflow-y: hidden;
     flex-shrink: 0;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
         }
+        .modal-main-view .reply-tabs::-webkit-scrollbar { display: none; }
 
         .modal-main-view .reply-toolbar {
     padding: 10px 20px;
@@ -8651,6 +8732,79 @@
     transform: translateX(4px);
     color: var(--text-primary);
     box-shadow: 0 3px 10px rgba(var(--accent-color-rgb),0.18);
+        }
+
+        /* 快捷动作：标题行 + 面板内添加/删除 */
+        .poke-quick-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    font-size: 12px;
+    color: var(--text-secondary);
+    margin: 4px 2px 1px;
+        }
+        .poke-add-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    background: rgba(var(--accent-color-rgb), 0.14);
+    border: 1px solid rgba(var(--accent-color-rgb), 0.3);
+    color: var(--accent-color);
+    font-size: 11.5px;
+    font-weight: 600;
+    padding: 3px 10px;
+    border-radius: 20px;
+    cursor: pointer;
+    transition: all 0.2s ease;
+        }
+        .poke-add-btn:hover {
+    background: var(--accent-color);
+    color: #fff;
+        }
+        .poke-quick-text {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+        }
+        .poke-quick-del {
+    flex-shrink: 0;
+    width: 22px;
+    height: 22px;
+    border-radius: 50%;
+    border: none;
+    background: rgba(128,128,128,0.16);
+    color: var(--text-secondary);
+    font-size: 10px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    opacity: 0.75;
+    transition: all 0.2s ease;
+        }
+        .poke-quick-del:hover {
+    background: #ff4757;
+    color: #fff;
+    opacity: 1;
+    transform: scale(1.08);
+        }
+        .poke-quick-empty {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 8px;
+    padding: 22px 14px;
+    text-align: center;
+    font-size: 12.5px;
+    color: var(--text-secondary);
+    opacity: 0.75;
+        }
+        .poke-quick-empty i {
+    font-size: 22px;
+    color: var(--accent-color);
+    opacity: 0.6;
         }
 
         .custom-poke-btn {

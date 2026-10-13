@@ -1750,22 +1750,22 @@ function _showBatchAddDialog() {
         animation:popIn 0.22s cubic-bezier(.34,1.56,.64,1);
     `;
 
-    const hasGroups = customReplyGroups && customReplyGroups.length > 0;
-    const groupPillsHTML = hasGroups ? `
+    // 始终生成分组 pills，即使没有分组也显示"不分组"选项
+    const groupPillsHTML = `
         <button class="ba-grp-pill" data-gidx="-1" style="
             padding:5px 13px;border-radius:20px;font-size:12px;font-family:var(--font-family);cursor:pointer;
             border:1.5px solid var(--accent-color);background:var(--accent-color);color:#fff;font-weight:700;
             flex-shrink:0;transition:all .15s;
         ">不分组</button>
-        ${customReplyGroups.map((g, i) => `
+        ${customReplyGroups?.map((g, i) => `
         <button class="ba-grp-pill" data-gidx="${i}" style="
             padding:5px 13px;border-radius:20px;font-size:12px;font-family:var(--font-family);cursor:pointer;
             border:1.5px solid ${g.color}44;background:${g.color}18;color:${g.color};font-weight:600;
             flex-shrink:0;transition:all .15s;
         ">
             <span style="display:inline-block;width:7px;height:7px;border-radius:50%;background:${g.color};margin-right:4px;vertical-align:middle;"></span>${g.name}
-        </button>`).join('')}
-    ` : '';
+        </button>`).join('') || ''}
+    `;
 
     panel.innerHTML = `
         <style>
@@ -1787,7 +1787,6 @@ function _showBatchAddDialog() {
                 <span id="batch-add-count">0 条</span>
             </div>
 
-            ${hasGroups ? `
             <div id="ba-group-section" style="margin-bottom:4px;">
                 <button id="ba-group-toggle" style="
                     display:flex;align-items:center;gap:7px;width:100%;
@@ -1805,7 +1804,7 @@ function _showBatchAddDialog() {
                         ${groupPillsHTML}
                     </div>
                 </div>
-            </div>` : ''}
+            </div>
         </div>
 
         <div style="flex-shrink:0;padding-top:14px;display:flex;gap:10px;">
